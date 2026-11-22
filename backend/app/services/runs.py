@@ -1,6 +1,8 @@
 """Assessment run helpers: creation, scope/keys, permissions, progress."""
 
+import time
 import uuid
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
@@ -45,7 +47,20 @@ class RunScope:
         return next((d.requirements for d in self.domains if d.avd_id == avd_id), [])
 
 
+# A run's scope never changes (its assessment version is a published copy), and it is needed on
+# every run and workspace request, including the ones pages poll. Kept per company and version
+# for a few minutes; the time limit only matters for master data labels, which can be renamed.
+_scopes: OrderedDict[tuple[uuid.UUID | None, uuid.UUID], tuple[float, RunScope]] = OrderedDict()
+SCOPE_SECONDS = 300
+SCOPE_ENTRIES = 128
+
+
 async def load_run_scope(db: AsyncSession, assessment_version_id: uuid.UUID) -> RunScope:
+    key = (tenant_of(db), assessment_version_id)
+    cached = _scopes.get(key)
+    if cached and time.monotonic() - cached[0] < SCOPE_SECONDS:
+        _scopes.move_to_end(key)
+        return cached[1]
     domains = await load_scopes(db, assessment_version_id)
     scope = RunScope(domains=domains)
     for d in domains:
@@ -58,6 +73,10 @@ async def load_run_scope(db: AsyncSession, assessment_version_id: uuid.UUID) -> 
     )).all()
     for qid, rid in rows:
         scope.question_reqs.setdefault(qid, []).append(rid)
+    if tenant_of(db) is not None:  # only company copies are immutable; the control database holds drafts
+        _scopes[key] = (time.monotonic(), scope)
+        while len(_scopes) > SCOPE_ENTRIES:
+            _scopes.popitem(last=False)
     return scope
 
 

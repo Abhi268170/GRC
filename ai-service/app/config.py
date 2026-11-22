@@ -9,7 +9,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=None, extra="ignore")
 
-    environment: str = "development"
+    environment: str = "development"  # development, test or production
     log_level: str = "INFO"
 
     # The model provider. Without a key the service starts, reports "degraded" and answers 503.

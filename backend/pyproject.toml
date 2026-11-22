@@ -36,4 +36,7 @@ target-version = "py313"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# One event loop for the whole run: the database engines are created once and reused.
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 pythonpath = ["."]
