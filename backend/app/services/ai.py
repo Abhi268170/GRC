@@ -1,35 +1,42 @@
-"""Thin wrapper around the Anthropic SDK used by every AI feature.
+"""Client of the AI service. Every AI feature goes through here.
 
-- Streaming for every call (long documents/outputs never hit HTTP timeouts).
-- Structured outputs via Pydantic models: results are schema-validated.
-- Server-side refusal fallbacks enabled by default (`fallbacks="default"`)."""
+The AI service owns the prompts, output schemas and model calls and has no database. This
+module sends it structured data (the models in `ai_contracts`), gets validated results back,
+and records what each call used in the right database: the backend owns the per-run AI budget."""
 
+import json
 import logging
 import uuid
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any, TypeVar
 
-import anthropic
-from pydantic import BaseModel
+import httpx
+from ai_contracts import (
+    ErrorEvent,
+    ErrorResponse,
+    FinalEvent,
+    GuideStepIn,
+    GuideSystemIn,
+    GuideSystemOut,
+    TaskResponse,
+    TextEvent,
+    ToolStartEvent,
+    Usage,
+)
+from pydantic import BaseModel, ValidationError
 
+from app.core import logs
 from app.core.config import get_settings
 
 log = logging.getLogger("ai")
 T = TypeVar("T", bound=BaseModel)
 
-FALLBACK_BETA = "server-side-fallback-2026-07-01"
+UNREACHABLE = "Could not reach the AI service"
 
 
 class AIError(RuntimeError):
-    pass
-
-
-# List prices in USD per million tokens: (input, output, cache read, cache write).
-PRICES = {
-    "claude-opus-5-5": (4.0, 20.0, 0.20, 5.0),
-    "claude-sonnet-5-5": (2.0, 10.0, 0.10, 2.5),
-    "claude-haiku-5-5": (0.10, 0.50, 0.01, 0.125),
-}
+    """An AI call failed. The message is safe to show to a user."""
 
 
 @dataclass
@@ -39,16 +46,12 @@ class UsageTag:
     run_id: uuid.UUID | None = None
 
 
-def estimate_cost(model: str, usage: Any) -> float:
-    p_in, p_out, p_read, p_write = PRICES.get(model, PRICES["claude-opus-5-5"])
-    read = getattr(usage, "cache_read_input_tokens", 0) or 0
-    write = getattr(usage, "cache_creation_input_tokens", 0) or 0
-    return (usage.input_tokens * p_in + usage.output_tokens * p_out + read * p_read + write * p_write) / 1_000_000
+# ---------- usage ----------
 
 
-async def record_usage(tag: UsageTag | None, model: str, usage: Any) -> None:
+async def record_usage(tag: UsageTag | None, usage: Usage | None) -> None:
     """Log one call in its own transaction, so it counts even if the caller's work rolls back."""
-    if tag is None:
+    if tag is None or usage is None:
         return
     from app.core.db import session_for
     from app.models import AiUsage
@@ -56,11 +59,10 @@ async def record_usage(tag: UsageTag | None, model: str, usage: Any) -> None:
     try:
         async with session_for(tag.tenant_id) as db:
             db.add(AiUsage(
-                run_id=tag.run_id, feature=tag.feature, model=model,
+                run_id=tag.run_id, feature=tag.feature, model=usage.model,
                 input_tokens=usage.input_tokens, output_tokens=usage.output_tokens,
-                cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
-                cache_write_tokens=getattr(usage, "cache_creation_input_tokens", 0) or 0,
-                cost_usd=estimate_cost(model, usage),
+                cache_read_tokens=usage.cache_read_tokens, cache_write_tokens=usage.cache_write_tokens,
+                cost_usd=usage.cost_usd,
             ))
             await db.commit()
     except Exception:  # noqa: BLE001 - metering must never break the feature itself
@@ -75,64 +77,95 @@ async def run_spend(db: Any, run_id: uuid.UUID) -> float:
     return float((await db.execute(select(func.coalesce(func.sum(AiUsage.cost_usd), 0)).where(AiUsage.run_id == run_id))).scalar())
 
 
-_client: anthropic.AsyncAnthropic | None = None
+# ---------- HTTP ----------
+
+_http: httpx.AsyncClient | None = None
 
 
-def client() -> anthropic.AsyncAnthropic:
-    global _client
-    if _client is None:
-        key = get_settings().anthropic_api_key
-        if not key:
-            raise AIError("ANTHROPIC_API_KEY is not configured")
-        _client = anthropic.AsyncAnthropic(api_key=key, max_retries=3)
-    return _client
+def http() -> httpx.AsyncClient:
+    global _http
+    if _http is None:
+        s = get_settings()
+        headers = {"Authorization": f"Bearer {s.ai_service_token}"} if s.ai_service_token else {}
+        _http = httpx.AsyncClient(
+            base_url=s.ai_service_url.rstrip("/"), headers=headers,
+            timeout=httpx.Timeout(connect=5.0, read=s.ai_request_timeout_seconds, write=120.0, pool=30.0),
+        )
+    return _http
 
 
-def analysis_model() -> str:
-    return get_settings().ai_model_analysis
+async def close() -> None:
+    global _http
+    if _http is not None:
+        await _http.aclose()
+        _http = None
 
 
-def conversation_model() -> str:
-    return get_settings().ai_model_conversation
+def _headers() -> dict[str, str]:
+    return {"content-type": "application/json", "x-request-id": logs.request_id.get()}
 
 
-async def structured(
-    *,
-    output: type[T],
-    system: str,
-    content: list[dict[str, Any]] | str,
-    model: str | None = None,
-    effort: str = "medium",
-    max_tokens: int = 64000,
-    usage: UsageTag | None = None,
-) -> T:
-    """One structured call. Raises AIError on refusal, truncation, or API failure."""
+def _failure(response: httpx.Response) -> tuple[str, Usage | None]:
     try:
-        async with client().beta.messages.stream(
-            model=model or analysis_model(),
-            max_tokens=max_tokens,
-            betas=[FALLBACK_BETA],
-            fallbacks="default",
-            system=system,
-            messages=[{"role": "user", "content": content}],
-            output_format=output,
-            output_config={"effort": effort},
-        ) as stream:
-            message = await stream.get_final_message()
-    except anthropic.APIStatusError as e:
-        log.error("AI request failed (%s): %s request_id=%s", e.status_code, e.message,
-                  getattr(e, "request_id", None))
-        raise AIError(f"AI service error ({e.status_code})") from e
-    except anthropic.APIConnectionError as e:
-        raise AIError("Could not reach the AI service") from e
+        body = ErrorResponse.model_validate_json(response.content)
+        return body.error.message, body.usage
+    except ValidationError:
+        return f"AI service error ({response.status_code})", None
 
-    await record_usage(usage, message.model, message.usage)
-    log.info("AI %s in=%s out=%s stop=%s id=%s", output.__name__, message.usage.input_tokens,
-             message.usage.output_tokens, message.stop_reason, message.id)
-    if message.stop_reason == "refusal":
-        raise AIError("The AI declined to process this request")
-    if message.stop_reason == "max_tokens":
-        raise AIError("The AI response was too long and was cut off")
-    if message.parsed_output is None:
-        raise AIError("The AI returned an unexpected response")
-    return message.parsed_output
+
+async def call(path: str, body: BaseModel, output: type[T], usage: UsageTag | None = None) -> T:
+    """Run one single-call task. Raises AIError with a message that can be shown to the user."""
+    try:
+        response = await http().post(f"/v1{path}", content=body.model_dump_json(), headers=_headers())
+    except httpx.HTTPError as e:
+        log.error("AI service request %s failed: %r", path, e)
+        raise AIError(UNREACHABLE) from e
+    if response.status_code != 200:
+        message, used = _failure(response)
+        await record_usage(usage, used)
+        log.warning("AI service %s -> %s: %s", path, response.status_code, message)
+        raise AIError(message)
+    result = TaskResponse[output].model_validate_json(response.content)
+    await record_usage(usage, result.usage)
+    return result.output
+
+
+# ---------- guided conversation ----------
+
+
+async def guide_system(body: GuideSystemIn) -> str:
+    try:
+        response = await http().post("/v1/guide/system", content=body.model_dump_json(), headers=_headers())
+    except httpx.HTTPError as e:
+        raise AIError(UNREACHABLE) from e
+    if response.status_code != 200:
+        raise AIError(_failure(response)[0])
+    return GuideSystemOut.model_validate_json(response.content).system
+
+
+async def guide_step(body: GuideStepIn, usage: UsageTag | None = None) -> AsyncIterator[TextEvent | ToolStartEvent | FinalEvent]:
+    """One model call of the guide, streamed. Yields text and tool-start events, then one final event.
+    Raises AIError if the step fails or the stream ends without a final event."""
+    events = {"text": TextEvent, "tool_start": ToolStartEvent, "final": FinalEvent, "error": ErrorEvent}
+    finished = False
+    try:
+        async with http().stream("POST", "/v1/guide/step", content=body.model_dump_json(), headers=_headers()) as response:
+            if response.status_code != 200:
+                await response.aread()
+                raise AIError(_failure(response)[0])
+            async for line in response.aiter_lines():
+                if not line.startswith("data: "):
+                    continue
+                data = json.loads(line[6:])
+                event = events[data["type"]].model_validate(data)
+                if isinstance(event, ErrorEvent):
+                    raise AIError(event.message)
+                if isinstance(event, FinalEvent):
+                    finished = True
+                    await record_usage(usage, event.usage)
+                yield event
+    except httpx.HTTPError as e:
+        log.error("AI service guide step failed: %r", e)
+        raise AIError(UNREACHABLE) from e
+    if not finished:
+        raise AIError(UNREACHABLE)

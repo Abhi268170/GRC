@@ -1,4 +1,4 @@
-# Development overrides: hot reload for frontend, backend and worker; RustFS console exposed.
+# Development overrides: hot reload for frontend, backend, worker and AI service; RustFS console exposed.
 # Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 services:
   backend:
@@ -6,16 +6,25 @@ services:
     volumes:
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
+      - ./packages/ai_contracts/ai_contracts:/app/ai_contracts
 
   worker:
     command: ["arq", "app.worker.WorkerSettings", "--watch", "app"]
     volumes:
       - ./backend/app:/app/app
+      - ./packages/ai_contracts/ai_contracts:/app/ai_contracts
 
   migrate:
     volumes:
       - ./backend/app:/app/app
       - ./backend/alembic:/app/alembic
+      - ./packages/ai_contracts/ai_contracts:/app/ai_contracts
+
+  ai-service:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8100", "--reload", "--reload-dir", "/app/app", "--reload-dir", "/app/ai_contracts"]
+    volumes:
+      - ./ai-service/app:/app/app
+      - ./packages/ai_contracts/ai_contracts:/app/ai_contracts
 
   frontend:
     image: grc-frontend-dev  # separate tag so a production build never replaces the dev image

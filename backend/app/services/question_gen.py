@@ -1,13 +1,15 @@
-"""AI question generation and requirement tagging for assessment versions.
+"""Question generation and requirement tagging for assessment versions, and the "scope" of an
+assessment version: its domains, controls and requirements as the AI features use them.
 
-Requirements are shown to the model with short keys (R1, R2, ...) so tags can be mapped
-back to requirement_version ids exactly."""
+Requirements get short keys (R1, R2, ...) so the AI's answers can be mapped back to
+requirement_version ids exactly. The prompts live in the AI service; this module loads the
+data, sends it, and saves the results."""
 
 import asyncio
 import uuid
 from dataclasses import dataclass, field
 
-from pydantic import BaseModel, Field
+import ai_contracts as contracts
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,9 +43,9 @@ class Req:
     action_templates: list[dict] = field(default_factory=list)  # [{"title", "description"}]
     risk_templates: list[dict] = field(default_factory=list)
 
-    @property
-    def evidence_text(self) -> str:
-        return "; ".join(self.evidence)
+    def contract(self) -> contracts.Requirement:
+        return contracts.Requirement(key=self.key, statement=self.statement, guidance=self.guidance or "",
+                                     evidence=list(self.evidence), mandatory=self.mandatory)
 
 
 @dataclass
@@ -56,23 +58,10 @@ class ControlContext:
     classification: dict[str, list[str]] = field(default_factory=dict)  # category label -> value labels
     texts: dict[str, str] = field(default_factory=dict)  # field label -> text
 
-    def render(self, detail: str = "full") -> str:
-        """detail="full": everything; "brief": what the control is about (for question writing and intake)."""
-        lines = [f"Control: {self.label}"]
-        brief = ("Key requirement", "Why it matters", "Applies to", "Triggers")
-        if self.area:
-            lines.append(f"  Area: {self.area}")
-        if self.responsible_role:
-            lines.append(f"  Responsible role: {self.responsible_role}")
-        for name, values in self.classification.items():
-            if values and (detail == "full" or name == "Use case"):
-                lines.append(f"  {name}: {', '.join(values)}")
-        if self.risk_exposure_level and detail == "full":
-            lines.append(f"  Company risk exposure: {self.risk_exposure_level}")
-        for name, text in self.texts.items():
-            if text and (detail == "full" or name in brief):
-                lines.append(f"  {name}: {text}")
-        return "\n".join(lines)
+    def contract(self) -> contracts.ControlContext:
+        return contracts.ControlContext(
+            label=self.label, area=self.area, risk_exposure_level=self.risk_exposure_level,
+            responsible_role=self.responsible_role, classification=self.classification, texts=self.texts)
 
 
 @dataclass
@@ -82,6 +71,23 @@ class DomainScope:
     description: str | None
     requirements: list[Req]
     controls: dict[uuid.UUID, ControlContext] = field(default_factory=dict)  # control version id -> context
+
+    def by_control(self, keep=None) -> list[tuple[ControlContext, list[Req]]]:
+        """Requirements grouped under their control, in order. `keep` filters requirements;
+        controls left without any are dropped."""
+        groups: list[tuple[uuid.UUID | None, list[Req]]] = []
+        for r in self.requirements:
+            if keep is not None and not keep(r):
+                continue
+            if not groups or groups[-1][0] != r.control_version_id:
+                groups.append((r.control_version_id, []))
+            groups[-1][1].append(r)
+        return [(self.controls.get(cv_id) or ControlContext(label=reqs[0].control), reqs) for cv_id, reqs in groups]
+
+    def contract(self) -> contracts.DomainScope:
+        return contracts.DomainScope(name=self.name, description=self.description, controls=[
+            contracts.ControlScope(context=ctx.contract(), requirements=[r.contract() for r in reqs])
+            for ctx, reqs in self.by_control()])
 
 
 TEXT_LABELS = {
@@ -101,74 +107,6 @@ CLASS_LABELS = {
     "protection_objective": "Protection objective",
     "use_case": "Use case",
 }
-
-
-def requirement_line(r: Req, evidence_label: str = "Evidence") -> str:
-    """'- R1: statement [mandatory]' then the guidance (how to meet it) and evidence (what proves it)."""
-    bits = [f"- {r.key}: {r.statement}"]
-    if r.mandatory is not None:
-        bits.append("[mandatory]" if r.mandatory else "[optional]")
-    line = " ".join(bits)
-    if r.guidance:
-        line += f"\n    How to meet it: {r.guidance}"
-    if r.evidence:
-        line += f"\n    {evidence_label}: {r.evidence_text}"
-    return line
-
-
-def render_requirements(scope: "DomainScope", detail: str = "full", evidence_label: str = "Evidence",
-                        keys: set[str] | None = None) -> list[str]:
-    """Requirements grouped under their control, with the control's context once per control."""
-    lines: list[str] = []
-    current = None
-    for r in scope.requirements:
-        if keys is not None and r.key not in keys:
-            continue
-        if r.control_version_id != current:
-            current = r.control_version_id
-            ctx = scope.controls.get(r.control_version_id) if r.control_version_id else None
-            lines.append("")
-            lines.append(ctx.render(detail) if ctx else f"Control: {r.control}")
-        lines.append(requirement_line(r, evidence_label))
-    return lines
-
-
-class DomainQuestion(BaseModel):
-    text: str = Field(description="The domain's single opening question, in plain conversational English.")
-    help_text: str = Field(description="A one-line intro, then exactly one '- ' bullet per control, then one short line on useful evidence.")
-
-
-class Tags(BaseModel):
-    requirement_keys: list[str]
-
-
-GEN_SYSTEM = """You write the single opening question for one domain of an AI-guided security and compliance assessment.
-
-Each domain has exactly one question. It is an open, friendly invitation for the person to describe how their company handles this area in their own words. An AI guide then asks follow-up questions about anything the answer leaves out, so the question doesn't need to ask for every detail.
-
-The question:
-- Plain English and no jargon, one or two sentences. Ask what the company actually does, not whether it complies.
-- It naturally invites information about every topic in the domain. You may name the main topics briefly.
-
-The help text:
-- One short intro line, then exactly one "- " bullet per control (the controls are listed below), each summarising that control's topic in a few words. Don't list individual requirements; the guide covers those in follow-ups.
-- Then one short line on evidence that helps (documents, screenshots, exports).
-
-Each control comes with its key requirement (what the company must have in place), why it matters, what it applies to (use cases) and the events that call for it (triggers). Use these to understand what each control is really about and to make the question concrete for the company, but don't copy them verbatim. Each requirement comes with guidance on how to meet it and the evidence that proves it. Requirements are marked [mandatory] or [optional] where the library says so; cover both.
-
-The person answering is usually not a compliance expert (an IT manager, founder, or HR lead)."""
-
-TAG_SYSTEM = """You map an assessment question to the requirements it gathers information for.
-Return the keys of every requirement that a complete answer to the question would provide evidence for. Return an empty list if none apply. Only use the keys you are given."""
-
-
-def _render(scope: DomainScope) -> str:
-    lines = [f"Domain: {scope.name}"]
-    if scope.description:
-        lines.append(f"About this domain: {scope.description}")
-    lines.append("\nControls and their requirements:")
-    lines += render_requirements(scope, detail="brief", evidence_label="Expected evidence")
-    return "\n".join(lines)
 
 
 async def load_scopes(db: AsyncSession, version_id: uuid.UUID) -> list[DomainScope]:
@@ -239,9 +177,9 @@ async def covered_requirement_ids(db: AsyncSession, version_id: uuid.UUID) -> se
     )).scalars())
 
 
-async def _generate_for(scope: DomainScope) -> DomainQuestion:
-    return await ai.structured(output=DomainQuestion, system=GEN_SYSTEM, content=_render(scope), effort="medium", max_tokens=16000,
-                               usage=ai.UsageTag("question_generation"))
+async def _generate_for(scope: DomainScope) -> contracts.DomainQuestion:
+    return await ai.call("/questions/generate", contracts.GenerateQuestionIn(domain=scope.contract()),
+                         contracts.DomainQuestion, ai.UsageTag("question_generation"))
 
 
 async def generate(db: AsyncSession, version_id: uuid.UUID, mode: str = "all") -> dict:
@@ -285,10 +223,9 @@ async def tag_question(db: AsyncSession, question: Question) -> list[uuid.UUID]:
     scope = next((s for s in await load_scopes(db, question.assessment_version_id) if s.avd_id == question.assessment_version_domain_id), None)
     if scope is None:
         return []
-    prompt = f"{_render(scope)}\n\nQuestion: {question.text}"
-    if question.help_text:
-        prompt += f"\nHelp text: {question.help_text}"
-    result = await ai.structured(output=Tags, system=TAG_SYSTEM, content=prompt, model=ai.conversation_model(),
-                                 effort="low", max_tokens=4000, usage=ai.UsageTag("question_tagging"))
+    result = await ai.call(
+        "/questions/tag",
+        contracts.TagQuestionIn(domain=scope.contract(), question_text=question.text, help_text=question.help_text),
+        contracts.Tags, ai.UsageTag("question_tagging"))
     by_key = {r.key: r.id for r in scope.requirements}
     return list(dict.fromkeys(by_key[k] for k in result.requirement_keys if k in by_key))

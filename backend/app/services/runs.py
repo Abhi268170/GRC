@@ -4,6 +4,7 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
+import ai_contracts as contracts
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -128,14 +129,12 @@ async def company(db: AsyncSession) -> Tenant:
         return await control.get(Tenant, tenant_of(db))
 
 
-async def company_context(db: AsyncSession, run: AssessmentRun) -> str:
+async def company_contract(db: AsyncSession, run: AssessmentRun | None = None) -> contracts.Company:
+    """The company as the AI service gets it. With a run, includes the summary from its intake."""
     tenant = await company(db)
-    lines = [f"Company: {tenant.name}", f"Industry: {tenant.industry or 'unknown'}",
-             f"Employees: {tenant.employee_count or 'unknown'}"]
-    summary = (run.intake_summary or {}).get("context_summary")
-    if summary:
-        lines.append(f"Context from the pre-assessment intake: {summary}")
-    return "\n".join(lines)
+    summary = (run.intake_summary or {}).get("context_summary") if run is not None else None
+    return contracts.Company(name=tenant.name, industry=tenant.industry, employees=tenant.employee_count,
+                             context_summary=summary)
 
 
 async def evaluations_by_req(db: AsyncSession, run_id: uuid.UUID) -> dict[uuid.UUID, RequirementEvaluation]:

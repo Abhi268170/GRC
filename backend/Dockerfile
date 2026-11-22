@@ -1,4 +1,6 @@
 # syntax=docker/dockerfile:1
+# Build with the shared AI service API models as an extra context (see docker-compose.yml):
+#   docker build --build-context contracts=../packages/ai_contracts ./backend
 FROM python:3.13.18-slim-trixie
 
 COPY --from=ghcr.io/astral-sh/uv:0.13.9 /uv /usr/local/bin/uv
@@ -12,10 +14,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# INSTALL_DEV=true adds the test and lint tools (used by docker-compose.test.yml).
+ARG INSTALL_DEV=false
 COPY pyproject.toml uv.lock ./
-RUN --mount=type=cache,target=/root/.cache/uv uv sync --frozen --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    if [ "$INSTALL_DEV" = "true" ]; then uv sync --frozen; else uv sync --frozen --no-dev; fi
 
 COPY . .
+COPY --from=contracts ai_contracts /app/ai_contracts
 
 RUN useradd --create-home --uid 1000 app && chown -R app /app
 USER app

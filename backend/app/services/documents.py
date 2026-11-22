@@ -1,9 +1,10 @@
-"""Turn an uploaded file into Claude content blocks (or plain text)."""
+"""Read uploaded files: extract their text, and prepare them for the AI service."""
 
 import base64
 import csv
 import io
 
+from ai_contracts import FileInput
 from docx import Document
 from openpyxl import load_workbook
 
@@ -50,24 +51,14 @@ def xlsx_text(data: bytes, max_rows: int = 2000) -> str:
     return "\n".join(out)
 
 
-def to_content_blocks(data: bytes, content_type: str, filename: str) -> list[dict]:
-    """Content blocks that let Claude read the file natively where possible."""
-    if content_type == PDF:
-        return [{
-            "type": "document",
-            "source": {"type": "base64", "media_type": PDF, "data": base64.b64encode(data).decode()},
-            "title": filename,
-        }]
-    if content_type in IMAGES:
-        return [{
-            "type": "image",
-            "source": {"type": "base64", "media_type": content_type, "data": base64.b64encode(data).decode()},
-        }]
-    return [{
-        "type": "document",
-        "source": {"type": "text", "media_type": "text/plain", "data": to_text(data, content_type)},
-        "title": filename,
-    }]
+def file_input(data: bytes, content_type: str, filename: str, text: str | None = None) -> FileInput:
+    """What the AI service gets for a file: PDFs and images as they are (the model reads them
+    natively), everything else as extracted text. Pass `text` when it is already extracted."""
+    if text is not None:
+        return FileInput(filename=filename, content_type=content_type, text=text)
+    if content_type == PDF or content_type in IMAGES:
+        return FileInput(filename=filename, content_type=content_type, data_b64=base64.b64encode(data).decode())
+    return FileInput(filename=filename, content_type=content_type, text=to_text(data, content_type))
 
 
 def to_text(data: bytes, content_type: str) -> str:

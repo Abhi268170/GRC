@@ -33,10 +33,10 @@ class Settings(BaseSettings):
     super_admin_password: str
     super_admin_name: str = "Super Admin"
 
-    # AI
-    anthropic_api_key: str = ""
-    ai_model_conversation: str = "claude-sonnet-5-5"
-    ai_model_analysis: str = "claude-opus-5-5"
+    # AI service: every model call goes through it (prompts and the provider key live there).
+    ai_service_url: str = "http://ai-service:8100"
+    ai_service_token: str = ""          # sent as a bearer token; required by the AI service in production
+    ai_request_timeout_seconds: float = 900  # one model call can take minutes
 
     # Maximum estimated AI spend per assessment run (USD). Guided chat and evidence
     # processing pause at this point; producing results is always allowed.

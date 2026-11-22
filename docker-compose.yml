@@ -11,8 +11,16 @@ x-backend-env: &backend-env
   JWT_SECRET: ${JWT_SECRET}
   SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL}
   SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD}
-  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  AI_SERVICE_URL: http://ai-service:8100
+  AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-}
   RUN_AI_BUDGET_USD: ${RUN_AI_BUDGET_USD:-3}
+
+# The backend, worker and migrate images are the same build. The shared AI service API models
+# (packages/ai_contracts) come in as an extra build context.
+x-backend-build: &backend-build
+  context: ./backend
+  additional_contexts:
+    contracts: ./packages/ai_contracts
 
 services:
   postgres:
@@ -55,7 +63,7 @@ services:
     restart: unless-stopped
 
   migrate:
-    build: ./backend
+    build: *backend-build
     command: ["python", "-m", "app.bootstrap"]
     environment: *backend-env
     depends_on:
@@ -64,11 +72,33 @@ services:
       rustfs: { condition: service_started }
     restart: "no"
 
+  # Every model call goes through this service. It has no database and is not published outside
+  # the compose network: only the backend and the worker call it.
+  ai-service:
+    build:
+      context: ./ai-service
+      additional_contexts:
+        contracts: ./packages/ai_contracts
+    environment:
+      ENVIRONMENT: ${ENVIRONMENT:-development}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-}
+      AI_MODEL_CONVERSATION: ${AI_MODEL_CONVERSATION:-claude-sonnet-5-5}
+      AI_MODEL_ANALYSIS: ${AI_MODEL_ANALYSIS:-claude-opus-5-5}
+      AI_MAX_CONCURRENT_CALLS: ${AI_MAX_CONCURRENT_CALLS:-16}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health/live')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
   backend:
-    build: ./backend
+    build: *backend-build
     environment: *backend-env
     depends_on:
       migrate: { condition: service_completed_successfully }
+      ai-service: { condition: service_started }
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     healthcheck:
@@ -79,11 +109,12 @@ services:
     restart: unless-stopped
 
   worker:
-    build: ./backend
+    build: *backend-build
     command: ["arq", "app.worker.WorkerSettings"]
     environment: *backend-env
     depends_on:
       migrate: { condition: service_completed_successfully }
+      ai-service: { condition: service_started }
     restart: unless-stopped
 
   frontend:

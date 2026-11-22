@@ -5,7 +5,7 @@ import uuid
 from collections import defaultdict
 from statistics import mean
 
-from pydantic import BaseModel, Field
+import ai_contracts as contracts
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -115,67 +115,6 @@ async def compute_rollups(db: AsyncSession, run: AssessmentRun) -> dict:
     return {"overall": overall, "domains": domains, "controls": controls, "frameworks": frameworks, "scope": scope, "evals": evals}
 
 
-class DomainNarrative(BaseModel):
-    domain: str
-    summary: str = Field(description="Two to three sentences on this domain's state.")
-    strengths: list[str]
-    gaps: list[str]
-    score_explanation: str = Field(description="One or two sentences explaining the calculated score (which requirements pulled it up or down).")
-
-
-class SuggestedAction(BaseModel):
-    title: str = Field(description="Imperative, specific, e.g. 'Enforce MFA for all admin accounts'.")
-    description: str = Field(description="What to do and what 'done' looks like.")
-    priority: str = Field(description="One of: low, medium, high, critical.")
-    requirement_keys: list[str]
-
-
-class SuggestedRisk(BaseModel):
-    title: str
-    description: str = Field(description="The risk scenario: what could happen, why, and the impact.")
-    category: str = Field(description="One of: security, compliance, operational, third_party, data_privacy.")
-    likelihood: int = Field(description="1 (rare) to 5 (almost certain).")
-    impact: int = Field(description="1 (negligible) to 5 (severe).")
-    requirement_keys: list[str]
-
-
-class AdaptedAction(BaseModel):
-    template_id: str = Field(description="The action template id, e.g. A3.")
-    title: str = Field(description="The template's title adapted to the company: imperative and specific.")
-    description: str = Field(description="The template's description adapted to the company: what to do and what 'done' looks like.")
-    priority: str = Field(description="One of: low, medium, high, critical.")
-
-
-class AdaptedRisk(BaseModel):
-    template_id: str = Field(description="The risk template id, e.g. K2.")
-    title: str
-    description: str = Field(description="The template's risk adapted to the company: what could happen, why, and the impact.")
-    category: str = Field(description="One of: security, compliance, operational, third_party, data_privacy.")
-    likelihood: int = Field(description="1 (rare) to 5 (almost certain).")
-    impact: int = Field(description="1 (negligible) to 5 (severe).")
-
-
-class Narrative(BaseModel):
-    executive_summary: str = Field(description="One short paragraph for leadership: overall posture, the most important gaps, and what to do first.")
-    overall_explanation: str = Field(description="One or two sentences explaining the overall calculated score.")
-    domains: list[DomainNarrative]
-    adapted_actions: list[AdaptedAction] = Field(description="Exactly one per action template listed.")
-    adapted_risks: list[AdaptedRisk] = Field(description="Exactly one per risk template listed.")
-    action_items: list[SuggestedAction] = Field(description="New action items, only for gaps listed as having no action template.")
-    risks: list[SuggestedRisk] = Field(description="New risks, only for gaps listed as having no risk template.")
-
-
-SYSTEM = """You write the results of a completed security and compliance assessment.
-
-Scores are already calculated by formula; explain them, don't change them. Ground everything in the ratings and rationales provided.
-
-A gap is a requirement rated below 3. Action items and risks start from the control library's templates:
-- Adapted actions and risks: return exactly one adapted item for every template listed, using its id. Keep the template's intent, and adapt the wording to this company: its size, industry, systems, and what the ratings and rationales say is already in place or missing. Don't drop, merge or add templates.
-- Set each action's priority from how weak the requirement is (0 or 1 means high or critical) and the risk it leaves. Score each risk's likelihood and impact honestly.
-- New action items and risks: write them only for the gaps listed as having no template, each tied to the requirements behind it. Group closely related gaps into one item. Return empty lists when every gap has templates.
-- Each control comes with context from the control library. Use "Impact if missing" and the company risk exposure to describe and score risks, the protection objectives to say what is at stake, and the responsible role to say who should own an action.
-- Write plainly for a non-specialist audience. No hype."""
-
 PRIORITIES = {"low", "medium", "high", "critical"}
 CATEGORIES = {"security", "compliance", "operational", "third_party", "data_privacy"}
 
@@ -187,26 +126,20 @@ async def generate(db: AsyncSession, run_id: uuid.UUID) -> dict:
     r = await compute_rollups(db, run)
     scope, evals = r["scope"], r["evals"]
 
-    lines = [f"Company: {tenant.name} ({tenant.industry}, {tenant.employee_count} employees)",
-             f"Assessment: {version.title}", f"Overall score: {r['overall']} / 4", ""]
-    for d in scope.domains:
-        dom = r["domains"][d.avd_id]
-        lines.append(f"## {d.name} - score {dom['score']}{' (has a requirement rated 0)' if dom['weakest'] else ''}")
-        current = None
-        for req in d.requirements:
-            if req.control_version_id != current:
-                current = req.control_version_id
-                ctx = d.controls.get(current)
-                lines.append(ctx.render("full") if ctx else f"Control: {req.control}")
-            e = evals.get(req.id)
-            rating = "not rated" if e is None else ("N/A" if e.is_na else str(e.rating))
-            flag = " [mandatory]" if req.mandatory else ""
-            lines.append(f"- {req.key}{flag} {req.statement} -> {rating}. {e.rationale if e else ''}")
-            if req.guidance:
-                lines.append(f"    How to meet it: {req.guidance}")
-        lines.append("")
-    lines.append("Framework coverage (clauses at maturity 3+): " + "; ".join(
-        f"{f['name']}: {f['pct']}% ({f['covered']}/{f['considered']})" for f in r["frameworks"].values()))
+    def rated(req: Req) -> contracts.RatedRequirement:
+        e = evals.get(req.id)
+        return contracts.RatedRequirement(
+            key=req.key, statement=req.statement, guidance=req.guidance or "", mandatory=req.mandatory,
+            rated=e is not None, is_na=bool(e and e.is_na), rating=e.rating if e else None,
+            rationale=(e.rationale or "") if e else "")
+
+    result_domains = [
+        contracts.ResultDomain(
+            name=d.name, score=r["domains"][d.avd_id]["score"], has_zero_rating=bool(r["domains"][d.avd_id]["weakest"]),
+            controls=[contracts.ResultControl(context=ctx.contract(), requirements=[rated(q) for q in reqs])
+                      for ctx, reqs in d.by_control()])
+        for d in scope.domains
+    ]
 
     # Gaps and their templates. Template ids are short (A1, K1) so the AI's answers map back exactly.
     gaps = [req for d in scope.domains for req in d.requirements
@@ -221,15 +154,22 @@ async def generate(db: AsyncSession, run_id: uuid.UUID) -> dict:
     free_action_keys = [req.key for req in gaps if not req.action_templates]
     free_risk_keys = [req.key for req in gaps if not req.risk_templates]
     rating_of = {req.key: evals[req.id].rating for req in gaps}
-    lines += ["", "Action templates to adapt (one adapted action each):"]
-    lines += [f"- {tid} for {req.key} (rated {rating_of[req.key]}): {t['title']}. {t['description']}" for tid, (req, t) in action_slots.items()] or ["(none)"]
-    lines += ["", "Risk templates to adapt (one adapted risk each):"]
-    lines += [f"- {tid} for {req.key} (rated {rating_of[req.key]}): {t['title']}. {t['description']}" for tid, (req, t) in risk_slots.items()] or ["(none)"]
-    lines += ["", f"Gaps with no action template (write new action items only for these): {', '.join(free_action_keys) or '(none)'}",
-              f"Gaps with no risk template (write new risks only for these): {', '.join(free_risk_keys) or '(none)'}"]
 
-    n = await ai.structured(output=Narrative, system=SYSTEM, content="\n".join(lines), effort="medium", max_tokens=32000,
-                            usage=ai.UsageTag("results", tenant_of(db), run.id))
+    def slots(templates: dict[str, tuple[Req, dict]]) -> list[contracts.TemplateSlot]:
+        return [contracts.TemplateSlot(id=tid, requirement_key=req.key, rating=rating_of[req.key],
+                                       title=t["title"], description=t["description"])
+                for tid, (req, t) in templates.items()]
+
+    n = await ai.call(
+        "/results/narrative",
+        contracts.ResultsIn(
+            company=contracts.Company(name=tenant.name, industry=tenant.industry, employees=tenant.employee_count),
+            assessment_title=version.title, overall_score=r["overall"], domains=result_domains,
+            frameworks=[contracts.FrameworkCoverage(name=f["name"], pct=f["pct"], covered=f["covered"], considered=f["considered"])
+                        for f in r["frameworks"].values()],
+            action_templates=slots(action_slots), risk_templates=slots(risk_slots),
+            gaps_without_action_template=free_action_keys, gaps_without_risk_template=free_risk_keys),
+        contracts.Narrative, ai.UsageTag("results", tenant_of(db), run.id))
 
     # Replace AI suggestions (and dismissals of them) from any previous generation of this run's outputs.
     # Results are only regenerated before approval, so nothing has been accepted into the registers yet.
