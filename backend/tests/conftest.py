@@ -192,7 +192,7 @@ def fake_ai(monkeypatch) -> FakeAI:
 @pytest.fixture
 def storage(monkeypatch) -> dict:
     """An in-memory object store in place of S3."""
-    from app.api import runs as runs_api
+    from app.api.runs import evidence as runs_api
 
     objects: dict[str, bytes] = {}
     monkeypatch.setattr(runs_api, "put_object", lambda key, data, ctype: objects.__setitem__(key, data))

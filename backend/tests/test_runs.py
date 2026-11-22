@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 import ai_contracts as contracts
 from sqlalchemy import select, text
 
-from app.api import runs as runs_api
+from app.api.runs import evidence as runs_api
 from app.core.config import get_settings
 from app.core.db import session_for
 from app.models import AiUsage, AssessmentRun, Job, RequirementEvaluation
