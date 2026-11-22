@@ -116,7 +116,8 @@ tenant                                 -- control database only: the registry of
   employee_count      text,          -- range: '1-10','11-50','51-200','201-1000','1000+'
   profile             jsonb default '{}',   -- extra profile fields later
   db_name             text unique not null, -- the company's own database on the same server
-  status              text check in ('provisioning','active'),  -- 'provisioning' while signup sets it up
+  status              text check in ('provisioning','active','migration_failed'),
+                      -- 'provisioning' while signup sets it up; 'migration_failed': offline until its database is upgraded
   created_at, updated_at
 
 login_directory                        -- control database only
@@ -132,6 +133,7 @@ app_user                               -- control database: the super admin; com
   organisational_role_id uuid null → organisational_role,
   must_change_password bool default false,   -- temp password from Tenant Admin
   is_active           bool default true,
+  token_version       int default 0,         -- part of every session token; raising it ends the user's sessions
   last_login_at, created_at, updated_at
 ```
 

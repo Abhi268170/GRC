@@ -6,19 +6,21 @@ Updated 2026-11-22. Read this first after a compaction.
 - AI-powered GRC POC.
 - Stack, run with Docker Compose (`docker-compose.yml` + `docker-compose.dev.yml`):
   - frontend: Next.js 16 + Tailwind v4 + shadcn + TanStack Query, on localhost:3100;
-  - backend: FastAPI + async SQLAlchemy, on :8000, routes at `/` (the frontend proxies `/api`);
+  - backend: FastAPI + async SQLAlchemy, on :8000, routes at `/` (the frontend proxies `/api` in dev; the Caddy proxy does in production);
+  - ai-service: FastAPI on :8100, internal only, every model call;
   - worker: arq;
   - postgres, redis, rustfs.
 - Docs:
-  - `PROJECT_IDEA.md` (decisions table, now up to #43);
+  - `PROJECT_IDEA.md` (decisions table, now up to #46);
   - `SCHEMA.md`;
   - `DESIGN_SYSTEM.md`;
   - `CONTROL_IMPORT_PLAN.md`;
-  - `TENANT_DATABASE_PLAN.md` (one database per company; §15 deviations, §16 code map).
+  - `TENANT_DATABASE_PLAN.md` (one database per company; §15 deviations, §16 code map);
+  - `PRODUCTION_READINESS.md` (review findings, what is left before going live, decisions made for the user).
 
 ## Constraints from the user (always apply)
 - Version control: a local git repository since 2026-11-22 (the user asked for it). No remote: never add one or push. `main` holds the baseline; work goes on a branch with one commit per logical change. Never commit `.env`.
-- POC scope: data security isn't a concern yet.
+- Security now matters: the user asked for production readiness on 2026-11-22 (before that it was a POC where security was out of scope).
 - Never print secrets. The API key is in `.env`. `SUPER_ADMIN_EMAIL` / `SUPER_ADMIN_PASSWORD` only go into a subprocess env (`set -a; . ./.env; set +a` then `-e VAR`), never echoed.
 - Don't re-add decorative AI icons (Wand2, Sparkles, Zap were removed on purpose).
 - Don't seed an example library or a demo assessment (cancelled). Keep the seeded domains (25 since decision 43).
@@ -72,26 +74,30 @@ Updated 2026-11-22. Read this first after a compaction.
   - The 2 existing companies and their 4 users were moved to their own databases.
   - Verified: `ruff`, `tsc`, `eslint`, `alembic check` on both trees, fresh install on an empty database, an API test over two new companies (full run, isolation 404s, users, run counts, deprecation, master data sync, failed-signup clean-up), a Playwright signup and super admin login. Test companies and test library content were removed afterwards.
 
-## In progress: production readiness (user is away; work autonomously)
-The user's request (2026-11-22): create a local repo and commit everything to a branch; then review the app thoroughly from a technical standpoint and make it production ready, modular and scalable; if possible separate the AI service (frontend, backend, AI service). No remote.
+## Production readiness (done 2026-11-22, while the user was away)
+The user's request: create a local repo and commit everything to a branch; then review the app thoroughly and make it production ready, modular and scalable; if possible separate the AI service (frontend, backend, AI service). No remote.
 
-- **Git:** `main` = baseline (`b69293e`). All new work is on branch `production-readiness`, one commit per logical change, each leaving the app working. Commit messages end with the two attribution lines (Co-Authored-By: Claude Fable 5.2, Claude-Session link).
-- **Done:**
-  - AI service separation (commit `320dfdb`): `ai-service/` (FastAPI, stateless, owns prompts/schemas/tools/model calls/provider key), `packages/ai_contracts/` (shared Pydantic request/response models, copied into both images at `/app/ai_contracts` through a Docker extra build context), `backend/app/services/ai.py` is now an httpx client (`ai.call(path, body, Output, UsageTag)`, `ai.guide_system`, `ai.guide_step`). The guided chat: backend keeps state and runs tools; one model call per `POST /v1/guide/step` (SSE). Usage is returned by the AI service and recorded by the backend.
-  - `scripts/e2e_smoke.py`: stdlib end-to-end test through the API (real AI calls). Run it only against the throwaway stack.
-- **Verification stack:** `docker compose -p grcverify --env-file .env.verify -f docker-compose.yml up -d --build backend worker ai-service` (production settings, own volumes, backend on :18000; `.env.verify` is git-ignored and generated from `.env`). Run: `(set -a; . ./.env.verify; set +a; BASE_URL=http://localhost:18000 python3 scripts/e2e_smoke.py)`. Tear down with `down -v` when finished. Never run the smoke test against the dev stack: it now holds the client's 49 real controls.
-- **Reviews:** three read-only review agents reported 73 findings (security 22, architecture 26, frontend 25). Most high-impact ones are fixed in commit `54bb3b2`; what is left goes into `PRODUCTION_READINESS.md`.
-- **Done since (all committed on `production-readiness`):**
-  - `54bb3b2` hardening: token versions (session revocation), login/signup rate limits (`core/ratelimit.py`), settings checks, body limit + `core/uploads.py`, per-company AI budget + open-run cap, bounded tenant engine cache, file content checks, permissions (library reads super admin only; intake/submit/upload; registers), `services/jobs.py` (failure hooks, time limits, `expire_stale`), worker rewrite, row locks, `/health/ready`, timeouts, migrations lock + `migration_failed` tenant status, Caddy proxy (`deploy/Caddyfile`) as the only published service in `docker-compose.yml`, frontend error pages / chat failure handling / session handling / headers. Migrations: control `1d0630937e43`, tenant `c3724ab3f860`.
-  - tests: `docker-compose.test.yml` (`docker compose -f docker-compose.test.yml run --rm backend-tests` and `... ai-service-tests`), 39 backend + 19 AI service tests, `.github/workflows/ci.yml`.
-- **Dev stack:** unchanged usage (`docker compose -f docker-compose.yml -f docker-compose.dev.yml up`), frontend on :3100, backend on :8000; the proxy is not started in dev. The base compose file alone is now the production shape (proxy on HTTP_PORT/HTTPS_PORT).
-- **Still to do:** `PRODUCTION_READINESS.md` (what was done, what is left, decisions made on the user's behalf), README architecture section, `PROJECT_IDEA.md` decisions 44+, optional split of `api/runs.py`, final lint + tests + smoke run, tear down the `grcverify` stack (`down -v`), final summary to the user.
-- **Decisions made on the user's behalf (they are away; record in the report):** AI service is a third deployable called over HTTP with a shared bearer token; prompts moved into it unchanged; backend keeps the AI budget; shared models live in `packages/ai_contracts`.
+- **Git:** `main` = baseline (`b69293e`). All the work is on branch `production-readiness` (not merged; the user decides). Commit messages end with the two attribution lines (Co-Authored-By: Claude Fable 5.2, Claude-Session link). Never add a remote or push.
+- **What was built** (full record with every finding: `PRODUCTION_READINESS.md`):
+  - **AI service** (`ai-service/`, decision 44): stateless FastAPI service that owns prompts, schemas, tools, model calls and the provider key. `packages/ai_contracts/` holds the shared request/response models (copied into both images at `/app/ai_contracts` through a Docker extra build context; mounted in dev). `backend/app/services/ai.py` is an httpx client: `ai.call(path, body, Output, UsageTag)`, `ai.guide_system`, `ai.guide_step`; the backend runs the guide's tools between model calls and records usage.
+  - **Hardening** (decision 45): `token_version` on users (session revocation), `core/ratelimit.py` (login, sign-up), strict settings in production (`Settings.unsafe_settings`), `BodyLimit` and `RequestId` middleware in `main.py`, `core/uploads.py`, per-company monthly AI budget and open-run cap (`ai.over_budget`, `ai.company_over_budget`), bounded tenant engine cache in `core/db.py`, file content and decompression checks in `services/documents.py`, tighter permissions, `services/jobs.py` (failure hooks by job type, time limits, `expire_stale`), row locks (`svc.get_run(..., lock=True)`, conversation lock in `guide.Turn.setup`), `/health/ready`, timeouts, tenant status `migration_failed` and a migration lock in `services/tenants.py`.
+  - **Deployment** (decision 46): `docker-compose.yml` is the production shape (Caddy proxy from `deploy/Caddyfile` is the only published service); `docker-compose.dev.yml` is development (no proxy, published ports, hot reload); `docker-compose.test.yml` runs tests.
+  - **Frontend:** `error.tsx` / `not-found.tsx` / `global-error.tsx`, `components/app/page-error.tsx`, queries throw to the error page on a failed first load (`components/providers.tsx`), `lib/api.ts` rewritten error handling and `streamPost` cut-off detection, session handling in `components/app/shell.tsx`, headers in `next.config.ts`.
+  - **Structure:** `backend/app/api/runs/` is a package (schemas, views, lifecycle, workspace, evidence).
+  - **Tests:** 39 backend + 19 AI service tests; `scripts/e2e_smoke.py`; `.github/workflows/ci.yml`.
+- **Review result:** 73 findings; 38 fixed, 16 partly, 19 open. Open ones and the pre-launch list (backups, monitoring, sign-up policy, verifying the AI-written mappings, non-superuser DB role) are in `PRODUCTION_READINESS.md` §3 and §5.
+- **Decisions made on the user's behalf** are listed in `PRODUCTION_READINESS.md` §4 (budgets, lockout, sign-up limits, tighter permissions, logout everywhere, proxy-only publishing). The user has not confirmed them yet.
+- **How to check things:**
+  - lint: `~/.local/bin/ruff check backend ai-service packages scripts`; frontend: `npx tsc --noEmit && npx eslint src`;
+  - tests: `docker compose -f docker-compose.test.yml run --rm --build backend-tests` and `... ai-service-tests`, then `down -v`;
+  - smoke test (real AI calls, leaves data): only on a throwaway stack: `docker compose -p grcverify --env-file .env.verify -f docker-compose.yml up -d --build`, then `(set -a; . ./.env.verify; set +a; BASE_URL=http://localhost:18080/api python3 scripts/e2e_smoke.py)`, then `down -v`. `.env.verify` is git-ignored. Never run it against the dev stack (it holds the client's 49 controls).
+- **Dev stack after this work:** same command as before; migrations `1d0630937e43` (control) and `c3724ab3f860` (tenant) are applied; a new `ai-service` container runs; `.env` has no `AI_SERVICE_TOKEN` (fine in development, required in production).
+- **Reading `frontend/node_modules` is denied by the permission settings**, so the Next 16 docs can't be read; Next conventions were verified by building and in a browser.
 
 ## Current state
 - **DB:** control database: 49 published controls (228 requirements), 0 assessments, 1 applied import; 25 domains, 22 org roles; six frameworks published (608 clauses); 2 tenants (`test`, `Northwind Labs`), each with its own database and no runs.
 - **AI usage:** `ai_usage.run_id` has no foreign key now, so deleting runs no longer deletes usage rows. The control database has 3 rows from the verification run (question generation).
-- **Open bugs / failing tests:** none known.
+- **Open bugs / failing tests:** none known. All 58 tests pass.
 - **Client control workbook loaded (decision 43).** The user applied and published the import on 2026-11-22: 49 published controls, 228 requirements, 678 mappings, all stored as `ai_suggested`. Source workbook: `/mnt/c/Users/abhijith.sa/OneDrive - PITSOLUTIONS/Documents/360trustup/02-11-26/360TrustUp_Controls_Full_Set 02-11-2026.xlsx`.
   - The user decided: full public framework lists; mappings stored as `ai_suggested`; six new domains with the workbook's abbreviations; a converter script and the normal import.
   - Done and verified:

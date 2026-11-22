@@ -54,7 +54,7 @@ When a run starts, the published assessment version and everything it points to 
 ## 5. Connections and requests
 
 - **Config:** `DATABASE_URL` stays the control database. Company URLs are built from it by swapping the database name.
-- **Engines:** `core/db.py` holds the control engine and a lazily created cache of company engines, keyed by tenant id, with small pools (pool size 2, overflow 3). Only active tenants are looked up.
+- **Engines:** `core/db.py` holds the control engine and a lazily created cache of company engines, keyed by tenant id, with small pools (5 plus 5 overflow) and at most 50 kept open per process. Only active tenants are looked up.
 - **Dependencies:**
   - `ControlDB` is a session on the control database. Every endpoint that reads the library, the catalog or master data uses it, including tenant users.
   - `TenantDB` is a session on the current user's company database.
@@ -146,8 +146,8 @@ No changes expected: the API paths and responses stay the same. Signup can take 
 
 ## 14. Risks and costs
 
-- **Connections:** every company database has its own pool. With the default `max_connections = 100`, that is fine for tens of tenants, not hundreds. Past that, add PgBouncer.
-- **Migrations:** they run per company, so a migration that fails halfway leaves companies on different versions until it is re-run.
+- **Connections:** every company database has its own pool (5 plus 5 overflow). Each process keeps at most 50 pools open and closes the least recently used one (`TENANT_POOL_CACHE_SIZE`). Postgres is started with `max_connections = 300`. Past a few hundred companies, add PgBouncer.
+- **Migrations:** they run per company, one run at a time (an advisory lock). A company whose database can't be upgraded is marked `migration_failed` and is offline until the next run succeeds; the others keep working.
 - **No cross-database transactions:** the directory and company writes, and the fan-outs, are kept in step by write ordering and retries, not by one transaction.
 - **Duplicated library rows:** each company database keeps copies of the assessments it has run. The copies are small text rows.
 
