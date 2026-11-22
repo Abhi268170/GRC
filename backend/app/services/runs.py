@@ -93,8 +93,10 @@ async def create_run(db: AsyncSession, user: AppUser, version: AssessmentVersion
 # ---------- access ----------
 
 
-async def get_run(db: AsyncSession, user: AppUser, run_id: uuid.UUID) -> AssessmentRun:
-    run = await db.get(AssessmentRun, run_id)
+async def get_run(db: AsyncSession, user: AppUser, run_id: uuid.UUID, lock: bool = False) -> AssessmentRun:
+    """`lock=True` holds the run's row until the transaction ends, so two requests that change its
+    status (submit twice, approve and request changes together) run one after the other."""
+    run = await db.get(AssessmentRun, run_id, with_for_update=lock, populate_existing=lock)
     if run is None:  # another company's run isn't in this database at all
         raise HTTPException(404, "Assessment not found")
     return run

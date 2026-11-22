@@ -1,5 +1,6 @@
 """Control library Excel export and import (Super Admin). See CONTROL_IMPORT_PLAN.md."""
 
+import asyncio
 import hashlib
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -11,7 +12,8 @@ from sqlalchemy import select, update
 
 from app.api.library import _control_version_out, get_control
 from app.core.auth import ControlDB, SuperAdmin
-from app.core.storage import delete_object, get_object, put_object
+from app.core.storage import adelete_object, aget_object, aput_object
+from app.core.uploads import clean_filename, content_disposition, read_limited
 from app.models import AppUser, Control, ControlImport, ControlVersion, Domain, DomainVersion, Requirement
 from app.services import control_import as ci
 from app.services import versioning as v
@@ -66,7 +68,7 @@ class PublishResult(BaseModel):
 
 
 def _download(data: bytes, name: str) -> RawResponse:
-    return RawResponse(data, media_type=XLSX, headers={"content-disposition": f'attachment; filename="{name}"'})
+    return RawResponse(data, media_type=XLSX, headers={"content-disposition": content_disposition(name)})
 
 
 def _expired(imp: ControlImport) -> bool:
@@ -135,9 +137,7 @@ async def export_library(db: ControlDB, user: SuperAdmin, domain_id: uuid.UUID |
 
 @router.post("/imports", response_model=ImportOut, status_code=201)
 async def preview_import(db: ControlDB, user: SuperAdmin, file: UploadFile = File(...)) -> ImportOut:
-    data = await file.read()
-    if len(data) > MAX_BYTES:
-        raise HTTPException(413, "The file is larger than 10 MB")
+    data = await read_limited(file, MAX_BYTES, "The file is larger than 10 MB")
     result = await ci.preview(db, data)
     digest = hashlib.sha256(data).hexdigest()
     earlier = (await db.execute(select(ControlImport).where(ControlImport.status == "applied")
@@ -152,13 +152,13 @@ async def preview_import(db: ControlDB, user: SuperAdmin, file: UploadFile = Fil
         })
     # Only the newest preview can be applied.
     await db.execute(update(ControlImport).where(ControlImport.status == "preview").values(status="expired"))
-    imp = ControlImport(filename=file.filename or "controls.xlsx", file_key="", created_by=user.id,
+    imp = ControlImport(filename=clean_filename(file.filename, "controls.xlsx"), file_key="", created_by=user.id,
                         summary={**result.summary(), "sha256": digest}, report=result.report(), choices={},
                         fingerprints=result.fingerprints)
     db.add(imp)
     await db.flush()
     imp.file_key = f"control-imports/{imp.id}.xlsx"
-    put_object(imp.file_key, data, XLSX)
+    await aput_object(imp.file_key, data, XLSX)
     await db.commit()
     await db.refresh(imp)
     return await _out(db, imp)
@@ -196,9 +196,9 @@ async def set_choices(import_id: uuid.UUID, body: Choices, db: ControlDB, _: Sup
 async def download_issues(import_id: uuid.UUID, db: ControlDB, _: SuperAdmin) -> RawResponse:
     imp = await _get(db, import_id)
     issues = (imp.report or {}).get("issues", [])
-    data = get_object(imp.file_key)
+    data = await aget_object(imp.file_key)
     try:
-        marked = mark_issues(data, issues)
+        marked = await asyncio.to_thread(mark_issues, data, issues)
     except Exception:  # noqa: BLE001 - the upload wasn't a readable workbook: nothing to mark
         raise HTTPException(409, "The file couldn't be opened, so there's nothing to mark.") from None
     stem = imp.filename.rsplit(".", 1)[0]
@@ -211,7 +211,7 @@ async def apply_import(import_id: uuid.UUID, db: ControlDB, _: SuperAdmin) -> Im
     if imp.status != "preview":
         raise HTTPException(409, "This import is no longer open. Upload the file again.")
     try:
-        done = await ci.apply(db, get_object(imp.file_key), imp.id, imp.fingerprints, imp.choices)
+        done = await ci.apply(db, await aget_object(imp.file_key), imp.id, imp.fingerprints, imp.choices)
     except HTTPException:
         await db.rollback()
         raise
@@ -272,7 +272,7 @@ async def delete_import(import_id: uuid.UUID, db: ControlDB, _: SuperAdmin) -> N
     if imp.status == "applied":
         raise HTTPException(409, "Applied imports are kept as history")
     try:
-        delete_object(imp.file_key)
+        await adelete_object(imp.file_key)
     except Exception:  # noqa: BLE001 - the stored file may already be gone
         pass
     await db.delete(imp)

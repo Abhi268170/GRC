@@ -153,7 +153,7 @@ export function RequirementSheet({ requirement, runId, evidence, editable, aiPau
     <Sheet open={!!requirement} onOpenChange={(o) => !o && onClose()}>
       <SheetContent side="right" className="w-full gap-0 overflow-y-auto p-0 sm:max-w-xl">
         {requirement && (
-          <SheetBody key={requirement.id + (requirement.evaluation?.status ?? "")} r={requirement} runId={runId} evidence={evidence} editable={editable}
+          <SheetBody key={requirement.id} r={requirement} runId={runId} evidence={evidence} editable={editable}
             aiPaused={aiPaused} busy={busy} onSave={onSave} onConfirm={onConfirm} onUpload={onUpload} />
         )}
       </SheetContent>
@@ -178,7 +178,9 @@ function SheetBody({ r, runId, evidence, editable, aiPaused, busy, onSave, onCon
 
   const original = { answer: e?.answer ?? "", rating: e && e.status !== "awaiting_ai" ? (e.is_na ? "na" : e.rating) : null, na: e?.na_reason ?? "" };
   const changed = answer !== original.answer || rating !== original.rating || naReason !== original.na || added.length > 0;
-  const processing = added.some((id) => byId.get(id)?.processing_status !== "ready");
+  // A file that isn't known yet is still uploading. One that failed is not "processing": it never will be ready.
+  const processing = added.some((id) => ["pending", "processing", undefined].includes(byId.get(id)?.processing_status));
+  const unreadable = added.some((id) => byId.get(id)?.processing_status === "failed");
   const canAskAi = rating === null && (answer.trim() || added.length) && !aiPaused;
   const canSave = rating !== null ? (rating !== "na" || naReason.trim().length >= 3) : canAskAi;
 
@@ -258,7 +260,7 @@ function SheetBody({ r, runId, evidence, editable, aiPaused, busy, onSave, onCon
                 const f = byId.get(id);
                 return (
                   <span key={id} className="inline-flex items-center gap-1.5 rounded-full bg-muted py-1.5 pl-3 pr-1.5 text-xs">
-                    {f?.processing_status === "ready" ? <FileText className="size-3.5" /> : <Loader2 className="size-3.5 animate-spin" />}
+                    {f?.processing_status === "ready" ? <FileText className="size-3.5" /> : f?.processing_status === "failed" ? <X className="size-3.5 text-destructive" /> : <Loader2 className="size-3.5 animate-spin" />}
                     <span className="max-w-48 truncate">{f?.filename ?? "Uploading…"}</span>
                     <button onClick={() => setAdded((a) => a.filter((x) => x !== id))} className="rounded-full p-0.5 hover:bg-card" aria-label="Remove"><X className="size-3" /></button>
                   </span>
@@ -302,12 +304,12 @@ function SheetBody({ r, runId, evidence, editable, aiPaused, busy, onSave, onCon
 
       {editable && (
         <div className="sticky bottom-0 space-y-2 border-t bg-popover p-4">
-          <Button className="w-full" size="lg" onClick={save} disabled={!changed || !canSave || busy || processing}>
+          <Button className="w-full" size="lg" onClick={save} disabled={!changed || !canSave || busy || processing || unreadable}>
             {busy ? <Loader2 className="animate-spin" /> : rating === null ? null : <Check />}
             {rating === null ? "Ask AI to rate" : "Save rating"}
           </Button>
           <p className="text-center text-[11px] text-muted-foreground">
-            {processing ? "Waiting for the evidence to be read…" : "Your answer and evidence are also checked against the other open requirements, in the background."}
+            {unreadable ? "One file couldn't be read. Remove it, or upload it again, to continue." : processing ? "Waiting for the evidence to be read…" : "Your answer and evidence are also checked against the other open requirements, in the background."}
           </p>
         </div>
       )}

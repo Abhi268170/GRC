@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { Check, Copy, KeyRound, MoreHorizontal, UserPlus } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { Field } from "@/components/app/field";
 import { ListSkeleton, PageHeader } from "@/components/app/page";
@@ -37,7 +38,14 @@ function TempPassword({ created, onClose }: { created: Created; onClose: () => v
           <div><p className="text-xs text-muted-foreground">Email</p><p className="font-medium">{created.user.email}</p></div>
           <div className="flex items-end justify-between gap-3">
             <div><p className="text-xs text-muted-foreground">Temporary password</p><p className="font-mono font-medium">{created.temporary_password}</p></div>
-            <Button size="sm" variant="outline" onClick={() => { navigator.clipboard.writeText(`${created.user.email}\n${created.temporary_password}`); setCopied(true); }}>
+            <Button size="sm" variant="outline" onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(`${created.user.email}\n${created.temporary_password}`);
+                setCopied(true);
+              } catch {
+                toast.error("Copying isn't available here. Select the password and copy it by hand.");
+              }
+            }}>
               {copied ? <Check /> : <Copy />} {copied ? "Copied" : "Copy"}
             </Button>
           </div>

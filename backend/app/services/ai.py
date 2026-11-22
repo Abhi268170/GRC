@@ -77,6 +77,28 @@ async def run_spend(db: Any, run_id: uuid.UUID) -> float:
     return float((await db.execute(select(func.coalesce(func.sum(AiUsage.cost_usd), 0)).where(AiUsage.run_id == run_id))).scalar())
 
 
+async def tenant_spend_this_month(db: Any) -> float:
+    """Estimated AI spend recorded in this database since the start of the calendar month."""
+    from sqlalchemy import func, select
+
+    from app.models import AiUsage
+
+    return float((await db.execute(select(func.coalesce(func.sum(AiUsage.cost_usd), 0)).where(
+        AiUsage.created_at >= func.date_trunc("month", func.now())))).scalar())
+
+
+async def company_over_budget(db: Any) -> bool:
+    """The company has used its AI budget for this month (never true for the control database)."""
+    from app.core.db import tenant_of
+
+    return tenant_of(db) is not None and await tenant_spend_this_month(db) >= get_settings().tenant_ai_budget_usd_month
+
+
+async def over_budget(db: Any, run_id: uuid.UUID) -> bool:
+    """AI assistance is paused for this run: the run's own budget or the company's monthly budget is used up."""
+    return await run_spend(db, run_id) >= get_settings().run_ai_budget_usd or await company_over_budget(db)
+
+
 # ---------- HTTP ----------
 
 _http: httpx.AsyncClient | None = None

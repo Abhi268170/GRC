@@ -1,11 +1,13 @@
 """Tenant assessment runs: start, intake, domains, guided conversation, evidence, verification,
 submission, review and approval, results and report export."""
 
+import asyncio
 import hashlib
 import json
 import logging
 import uuid
 from datetime import datetime
+from typing import Annotated
 
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import Response as RawResponse
@@ -44,9 +46,10 @@ from app.models import (
     RunQuestion,
     RunRollup,
 )
-from app.services import ai, export, guide, snapshot
+from app.services import ai, export, guide, jobs, snapshot
 from app.services import runs as svc
-from app.services.documents import ALLOWED, guess_type
+from app.core.uploads import clean_filename, content_disposition, read_limited
+from app.services.documents import ALLOWED, IMAGES, PDF, guess_type, looks_like
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 MAX_EVIDENCE = 25 * 1024 * 1024
@@ -107,7 +110,7 @@ class RunDetail(RunSummary):
 
 
 class IntakeIn(BaseModel):
-    answers: dict[str, str]
+    answers: dict[Annotated[str, Field(max_length=16)], Annotated[str, Field(max_length=2000)]] = Field(max_length=20)
 
 
 class AssignIn(BaseModel):
@@ -116,7 +119,7 @@ class AssignIn(BaseModel):
 
 class MessageIn(BaseModel):
     content: str = Field(default="", max_length=4000)
-    evidence_ids: list[uuid.UUID] = []
+    evidence_ids: list[uuid.UUID] = Field(default=[], max_length=20)
 
 
 class NaIn(BaseModel):
@@ -126,7 +129,7 @@ class NaIn(BaseModel):
 class EvaluationIn(BaseModel):
     rating: int | None = Field(default=None, ge=0, le=4)
     is_na: bool = False
-    na_reason: str | None = None
+    na_reason: str | None = Field(default=None, max_length=2000)
 
 
 class ChangesIn(BaseModel):
@@ -264,7 +267,7 @@ async def _latest_job(db: TenantDB, run_id: uuid.UUID, types: tuple[str, ...]) -
 
 
 async def _ai_paused(db: TenantDB, run: AssessmentRun) -> bool:
-    return await ai.run_spend(db, run.id) >= get_settings().run_ai_budget_usd
+    return await ai.over_budget(db, run.id)
 
 
 async def _notify(db: TenantDB, run: AssessmentRun, user_ids: set[uuid.UUID], type: str, payload: dict) -> None:
@@ -292,6 +295,12 @@ async def start_run(body: StartIn, db: TenantDB, control: ControlDB, me: TenantM
     published = await control.get(AssessmentVersion, body.assessment_version_id)
     if published is None or published.status != "published":
         raise HTTPException(404, "This assessment isn't available")
+    # Starting a run costs an AI call, so the number of open runs and the monthly AI budget are capped.
+    open_runs = (await db.execute(select(func.count()).select_from(AssessmentRun).where(AssessmentRun.status != "approved"))).scalar()
+    if open_runs >= get_settings().max_open_runs_per_tenant:
+        raise HTTPException(409, "Your company has too many assessments in progress. Finish or approve one first.")
+    if await ai.company_over_budget(db):
+        raise HTTPException(409, "Your company has used its AI allowance for this month, so new assessments can't be started.")
     # The run works on this company's own copy of the assessment (same ids as the original).
     await snapshot.copy_assessment_version(control, db, published.id)
     version = await db.get(AssessmentVersion, published.id)
@@ -304,6 +313,7 @@ async def start_run(body: StartIn, db: TenantDB, control: ControlDB, me: TenantM
 @router.get("/{run_id}", response_model=RunDetail)
 async def get_run(run_id: uuid.UUID, db: TenantDB, me: TenantMember) -> RunDetail:
     run = await svc.get_run(db, me, run_id)
+    await jobs.expire_stale(db, run.id)  # a job that can no longer finish must not leave the run stuck
     version = await db.get(AssessmentVersion, run.assessment_version_id)
     scope = await svc.load_run_scope(db, run.assessment_version_id)
     evals = await svc.evaluations_by_req(db, run.id)
@@ -325,7 +335,8 @@ async def get_run(run_id: uuid.UUID, db: TenantDB, me: TenantMember) -> RunDetai
 
 @router.post("/{run_id}/intake", response_model=RunDetail)
 async def submit_intake(run_id: uuid.UUID, body: IntakeIn, db: TenantDB, me: TenantMember) -> RunDetail:
-    run = await svc.get_run(db, me, run_id)
+    run = await svc.get_run(db, me, run_id, lock=True)
+    _require_reviewer(me, run, "answer the intake")
     if run.status != "intake" or (run.intake_summary or {}).get("status") != "ready":
         raise HTTPException(409, "The intake isn't ready for answers")
     intake = dict(run.intake_summary)
@@ -337,7 +348,8 @@ async def submit_intake(run_id: uuid.UUID, body: IntakeIn, db: TenantDB, me: Ten
 
 @router.post("/{run_id}/intake/skip", response_model=RunDetail)
 async def skip_intake(run_id: uuid.UUID, db: TenantDB, me: TenantMember) -> RunDetail:
-    run = await svc.get_run(db, me, run_id)
+    run = await svc.get_run(db, me, run_id, lock=True)
+    _require_reviewer(me, run, "skip the intake")
     if run.status != "intake" or (run.intake_summary or {}).get("status") == "tailoring":
         raise HTTPException(409, "The intake can't be skipped now")
     run.intake_summary = {**(run.intake_summary or {}), "status": "skipped"}
@@ -365,25 +377,41 @@ async def assign(run_id: uuid.UUID, run_domain_id: uuid.UUID, body: AssignIn, db
     return await get_run(run_id, db, me)
 
 
+def _require_reviewer(me: AppUser, run: AssessmentRun, action: str) -> None:
+    if not svc.can_review(me, run):
+        raise HTTPException(403, f"Only the person who started this assessment or an admin can {action}")
+
+
 # ---------- domain workspace ----------
 
 
 async def _ensure_first_question(db: TenantDB, run: AssessmentRun, rd: RunDomain) -> None:
-    conv = (await db.execute(select(Conversation).where(Conversation.run_domain_id == rd.id))).scalar_one()
-    has = (await db.execute(select(ConversationMessage.id).where(ConversationMessage.conversation_id == conv.id).limit(1))).first()
-    if has or run.status not in ("in_progress", "changes_requested"):
+    """The first time a domain is opened, its first question is added to the conversation."""
+    if run.status not in ("in_progress", "changes_requested"):
         return
-    q = await svc.current_question(db, rd)
-    if q:
-        db.add(ConversationMessage(conversation_id=conv.id, role="system_event", content=q.text,
-                                   data={"kind": "question", "run_question_id": str(q.id), "follow_up": False}))
-        await db.commit()
+    started = select(ConversationMessage.id).join(Conversation, Conversation.id == ConversationMessage.conversation_id).where(
+        Conversation.run_domain_id == rd.id).limit(1)
+    if (await db.execute(started)).first():
+        return
+    # Locked so two page loads at the same moment don't both add it. If someone else holds the lock
+    # (another page load, or a chat turn), they are taking care of it: don't wait.
+    conv = (await db.execute(select(Conversation).where(Conversation.run_domain_id == rd.id)
+                             .with_for_update(skip_locked=True))).scalar_one_or_none()
+    if conv is not None and not (await db.execute(started)).first():
+        q = await svc.current_question(db, rd)
+        if q:
+            db.add(ConversationMessage(conversation_id=conv.id, role="system_event", content=q.text,
+                                       data={"kind": "question", "run_question_id": str(q.id), "follow_up": False}))
+    await db.commit()  # also releases the lock
 
 
 @router.get("/{run_id}/domains/{run_domain_id}", response_model=Workspace)
 async def workspace(run_id: uuid.UUID, run_domain_id: uuid.UUID, db: TenantDB, me: TenantMember) -> Workspace:
     run = await svc.get_run(db, me, run_id)
     rd = await svc.get_domain(db, run, run_domain_id)
+    unread = (await db.execute(select(Evidence.id).where(
+        Evidence.run_id == run.id, Evidence.processing_status.in_(("pending", "processing"))))).scalars().all()
+    await jobs.expire_stale(db, run.id, *unread)  # jobs that can no longer finish must not leave the page waiting
     await _ensure_first_question(db, run, rd)
     scope = await svc.load_run_scope(db, run.assessment_version_id)
     evals = await svc.evaluations_by_req(db, run.id)
@@ -504,12 +532,14 @@ async def stream_message(run_id: uuid.UUID, run_domain_id: uuid.UUID, body: Mess
     (refetch the workspace) or `error`. Nothing is saved unless the whole turn succeeds."""
     await _turn_inputs(db, me, run_id, run_domain_id, body)  # validate before opening the stream
     user_id, tenant_id = me.id, tenant_of(db)
+    # The request's session would otherwise hold a connection, idle, until the stream ends.
+    await db.close()
 
     async def events():
         def sse(payload: dict) -> str:
             return f"data: {json.dumps(payload)}\n\n"
 
-        # The request's session may close once the response starts, so the turn gets its own.
+        # The turn runs in its own session, which lives as long as the stream.
         async with session_for(tenant_id) as session:
             try:
                 user = await session.get(AppUser, user_id)
@@ -595,7 +625,7 @@ class RequirementIn(BaseModel):
     rating: int | None = Field(default=None, ge=0, le=4)
     is_na: bool = False
     na_reason: str | None = Field(default=None, max_length=2000)
-    evidence_ids: list[uuid.UUID] = []
+    evidence_ids: list[uuid.UUID] = Field(default=[], max_length=20)
 
 
 @router.put("/{run_id}/requirements/{requirement_version_id}", response_model=Workspace)
@@ -710,23 +740,32 @@ async def reopen_domain(run_id: uuid.UUID, run_domain_id: uuid.UUID, db: TenantD
 async def upload_evidence(run_id: uuid.UUID, db: TenantDB, me: TenantMember, file: UploadFile = File(...)) -> EvidenceOut:
     run = await svc.get_run(db, me, run_id)
     svc.require_editable(run)
+    domains = (await db.execute(select(RunDomain).where(RunDomain.run_id == run.id))).scalars().all()
+    if not any(svc.can_work_on(me, run, rd) for rd in domains):
+        raise HTTPException(403, "Every domain of this assessment is assigned to someone else")
     if await _ai_paused(db, run):
         raise HTTPException(409, "AI assistance for this assessment has reached its limit, so new evidence can't be read")
-    data = await file.read()
-    ctype = guess_type(file.filename or "evidence", file.content_type)
+    filename = clean_filename(file.filename, "evidence")
+    ctype = guess_type(filename, file.content_type)
     if ctype not in ALLOWED:
         raise HTTPException(422, "Upload a PDF, Word, Excel, CSV, text, PNG or JPG file")
-    if len(data) > MAX_EVIDENCE:
-        raise HTTPException(413, "Files can be up to 25 MB")
+    data = await read_limited(file, MAX_EVIDENCE, "Files can be up to 25 MB")
+    if not looks_like(data, ctype):
+        raise HTTPException(422, f"{filename} doesn't look like a {filename.rsplit('.', 1)[-1].upper()} file")
     digest = hashlib.sha256(data).hexdigest()
     ev = (await db.execute(select(Evidence).where(Evidence.run_id == run.id, Evidence.sha256 == digest))).scalar_one_or_none()
     if ev is None:  # the same file is stored and processed only once per run
-        ev = Evidence(run_id=run.id, storage_key="", filename=file.filename or "evidence",
+        ev = Evidence(run_id=run.id, storage_key="", filename=filename,
                       content_type=ctype, size_bytes=len(data), sha256=digest, uploaded_by=me.id)
         db.add(ev)
         await db.flush()
-        ev.storage_key = f"tenants/{tenant_of(db)}/runs/{run.id}/evidence/{ev.id}/{ev.filename}"
-        put_object(ev.storage_key, data, ctype)
+        # The key never contains the file name: names are user input.
+        ev.storage_key = f"tenants/{tenant_of(db)}/runs/{run.id}/evidence/{ev.id}"
+        await asyncio.to_thread(put_object, ev.storage_key, data, ctype)
+        await enqueue(db, type="process_evidence", ref_type="evidence", ref_id=ev.id)
+    elif ev.processing_status == "failed":
+        # Uploading the same file again is how a file that couldn't be read is retried.
+        ev.processing_status, ev.processing_error = "pending", None
         await enqueue(db, type="process_evidence", ref_type="evidence", ref_id=ev.id)
     else:
         await db.commit()
@@ -740,8 +779,11 @@ async def download_evidence(run_id: uuid.UUID, evidence_id: uuid.UUID, db: Tenan
     ev = await db.get(Evidence, evidence_id)
     if ev is None or ev.run_id != run.id:
         raise HTTPException(404, "File not found")
-    return RawResponse(get_object(ev.storage_key), media_type=ev.content_type,
-                       headers={"content-disposition": f'inline; filename="{ev.filename}"'})
+    data = await asyncio.to_thread(get_object, ev.storage_key)
+    # Only PDFs and images open in the browser; everything else downloads. The type is never guessed.
+    inline = ev.content_type == PDF or ev.content_type in IMAGES
+    return RawResponse(data, media_type=ev.content_type, headers={
+        "content-disposition": content_disposition(ev.filename, inline=inline), "x-content-type-options": "nosniff"})
 
 
 # ---------- submission, review, results ----------
@@ -749,9 +791,12 @@ async def download_evidence(run_id: uuid.UUID, evidence_id: uuid.UUID, db: Tenan
 
 @router.post("/{run_id}/submit", response_model=RunDetail)
 async def submit(run_id: uuid.UUID, db: TenantDB, me: TenantMember) -> RunDetail:
-    run = await svc.get_run(db, me, run_id)
+    run = await svc.get_run(db, me, run_id, lock=True)
+    _require_reviewer(me, run, "submit it")
     if run.status not in ("in_progress", "changes_requested"):
         raise HTTPException(409, "This assessment can't be submitted now")
+    if await ai.company_over_budget(db):
+        raise HTTPException(409, "Your company has used its AI allowance for this month, so results can't be written yet.")
     statuses = (await db.execute(select(RunDomain.status).where(RunDomain.run_id == run.id))).scalars().all()
     if any(s != "completed" for s in statuses):
         raise HTTPException(409, "Complete every domain before submitting")
@@ -762,7 +807,7 @@ async def submit(run_id: uuid.UUID, db: TenantDB, me: TenantMember) -> RunDetail
 
 @router.post("/{run_id}/request-changes", response_model=RunDetail)
 async def request_changes(run_id: uuid.UUID, body: ChangesIn, db: TenantDB, me: TenantMember) -> RunDetail:
-    run = await svc.get_run(db, me, run_id)
+    run = await svc.get_run(db, me, run_id, lock=True)
     if not svc.can_review(me, run):
         raise HTTPException(403, "Only the person who started this assessment or an admin can review it")
     if run.status != "in_review":
@@ -781,7 +826,7 @@ async def request_changes(run_id: uuid.UUID, body: ChangesIn, db: TenantDB, me: 
 
 @router.post("/{run_id}/approve", response_model=RunDetail)
 async def approve(run_id: uuid.UUID, db: TenantDB, me: TenantMember) -> RunDetail:
-    run = await svc.get_run(db, me, run_id)
+    run = await svc.get_run(db, me, run_id, lock=True)
     if not svc.can_review(me, run):
         raise HTTPException(403, "Only the person who started this assessment or an admin can approve it")
     if run.status != "in_review":
@@ -872,8 +917,9 @@ async def download_report(run_id: uuid.UUID, fmt: str, db: TenantDB, me: TenantM
     live = lambda items: [i.model_dump() for i in items if i.status != "dismissed"]  # noqa: E731
     acts, rsks = live(data.actions), live(data.risks)
     if fmt == "pdf":
-        body, media = export.to_pdf(data.report, acts, rsks), "application/pdf"
+        body, media = await asyncio.to_thread(export.to_pdf, data.report, acts, rsks), "application/pdf"
     else:
-        body, media = export.to_docx(data.report, acts, rsks), "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    name = "".join(ch if ch.isalnum() else "-" for ch in data.report["title"]).strip("-").lower()
-    return RawResponse(body, media_type=media, headers={"content-disposition": f'attachment; filename="{name}-report.{fmt}"'})
+        body = await asyncio.to_thread(export.to_docx, data.report, acts, rsks)
+        media = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    name = "".join(ch if ch.isalnum() else "-" for ch in data.report["title"]).strip("-").lower() or "assessment"
+    return RawResponse(body, media_type=media, headers={"content-disposition": content_disposition(f"{name}-report.{fmt}")})

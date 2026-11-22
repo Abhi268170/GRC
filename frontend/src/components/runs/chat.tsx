@@ -113,7 +113,7 @@ function LiveReply({ live }: { live: LiveTurn }) {
 
 export function Chat({ ws, onSend, onUpload, onNa, live, naBusy }: {
   ws: Workspace; live: LiveTurn | null; naBusy: boolean;
-  onSend: (text: string, evidence: string[]) => void; onUpload: (f: File) => Promise<EvidenceFile | undefined>; onNa: (q: string, reason: string) => void;
+  onSend: (text: string, evidence: string[]) => Promise<boolean>; onUpload: (f: File) => Promise<EvidenceFile | undefined>; onNa: (q: string, reason: string) => void;
 }) {
   const [text, setText] = useState("");
   const [attached, setAttached] = useState<string[]>([]);
@@ -127,11 +127,16 @@ export function Chat({ ws, onSend, onUpload, onNa, live, naBusy }: {
 
   useEffect(() => { bottom.current?.scrollIntoView({ behavior: "smooth", block: "end" }); }, [ws.messages.length, live?.reply.length, live?.status]);
 
-  const send = () => {
+  const send = async () => {
     if (live || processing || (!text.trim() && !attached.length)) return;
-    onSend(text.trim(), attached);
+    const draft = { text, attached };
     setText("");
     setAttached([]);
+    // Nothing is saved unless the whole turn succeeds, so a failed turn gives the message back.
+    if (!(await onSend(draft.text.trim(), draft.attached))) {
+      setText(draft.text);
+      setAttached(draft.attached);
+    }
   };
 
   return (

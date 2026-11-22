@@ -6,13 +6,13 @@ import uuid
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 
 from app.api.schemas import UserOut
 from app.core.auth import ControlDB, TenantAdmin, TenantDB, TenantMember
 from app.core.db import tenant_of
-from app.core.security import hash_password
+from app.core.security import hash_password_async
 from app.models import AppUser, LoginDirectory, OrganisationalRole
 from app.services import snapshot
 
@@ -58,12 +58,12 @@ async def create_user(body: UserCreate, db: TenantDB, control: ControlDB, me: Te
     email = body.email.lower()
     taken = HTTPException(409, "An account with this email already exists")
     if await control.get(LoginDirectory, email) or (
-            await db.execute(select(AppUser.id).where(func.lower(AppUser.email) == email))).first():
+            await db.execute(select(AppUser.id).where(AppUser.email == email))).first():
         raise taken
     await _check_role(control, db, body.organisational_role_id)
     temp = secrets.token_urlsafe(9)
     user = AppUser(email=email, full_name=body.full_name,
-                   password_hash=hash_password(temp), organisational_role_id=body.organisational_role_id,
+                   password_hash=await hash_password_async(temp), organisational_role_id=body.organisational_role_id,
                    platform_role="tenant_admin" if body.is_admin else "tenant_user", must_change_password=True)
     # Two databases, so no single transaction: reserve the email in the directory first,
     # and give it back if the user can't be saved.
@@ -90,8 +90,11 @@ async def edit_user(user_id: uuid.UUID, body: UserEdit, db: TenantDB, control: C
     if user.id == me.id and (not body.is_admin or not body.is_active):
         raise HTTPException(409, "You can't remove your own admin access or deactivate yourself")
     await _check_role(control, db, body.organisational_role_id)
+    role = "tenant_admin" if body.is_admin else "tenant_user"
+    if (user.is_active and not body.is_active) or role != user.platform_role:
+        user.token_version += 1  # deactivation or a role change ends the user's sessions
     user.full_name, user.organisational_role_id, user.is_active = body.full_name, body.organisational_role_id, body.is_active
-    user.platform_role = "tenant_admin" if body.is_admin else "tenant_user"
+    user.platform_role = role
     await db.commit()
     return user
 
@@ -102,6 +105,7 @@ async def reset_password(user_id: uuid.UUID, db: TenantDB, me: TenantAdmin) -> U
     if user is None:
         raise HTTPException(404, "User not found")
     temp = secrets.token_urlsafe(9)
-    user.password_hash, user.must_change_password = hash_password(temp), True
+    user.password_hash, user.must_change_password = await hash_password_async(temp), True
+    user.token_version += 1  # whoever knew the old password is signed out
     await db.commit()
     return UserCreated(user=UserOut.model_validate(user), temporary_password=temp)

@@ -3,17 +3,18 @@
 import uuid
 from datetime import datetime
 
-from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select
 
-from app.core.auth import ControlDB, CurrentUser, SuperAdmin
+from app.core.auth import ControlDB, SuperAdmin
 from app.core.queue import enqueue
-from app.core.storage import delete_object, put_object
+from app.core.storage import adelete_object, aput_object
+from app.core.uploads import clean_filename, read_limited
 from app.models import Framework, FrameworkClause, FrameworkVersion, Job, RequirementClauseMap, RequirementVersion
-from app.services import framework_parser
+from app.services import framework_parser, jobs
 from app.services import versioning as v
-from app.services.documents import ALLOWED, guess_type
+from app.services.documents import ALLOWED, guess_type, looks_like
 
 router = APIRouter(prefix="/frameworks", tags=["frameworks"])
 
@@ -111,7 +112,7 @@ async def _framework_out(db: ControlDB, fw: Framework) -> FrameworkOut:
 
 
 @router.get("", response_model=list[FrameworkOut])
-async def list_frameworks(db: ControlDB, _: CurrentUser) -> list[FrameworkOut]:
+async def list_frameworks(db: ControlDB, _: SuperAdmin) -> list[FrameworkOut]:
     fws = (await db.execute(select(Framework).order_by(Framework.name))).scalars().all()
     return [await _framework_out(db, fw) for fw in fws]
 
@@ -136,20 +137,21 @@ async def upload_version(framework_id: uuid.UUID, db: ControlDB, _: SuperAdmin,
         raise HTTPException(404, "Framework not found")
     if await v.get_version(db, FrameworkVersion, "framework_id", framework_id, "draft"):
         raise HTTPException(409, "This framework already has a draft version. Publish or discard it first.")
-    data = await file.read()
-    ctype = guess_type(file.filename or "document", file.content_type)
+    filename = clean_filename(file.filename, "document")
+    ctype = guess_type(filename, file.content_type)
     if ctype not in ALLOWED or ctype.startswith("image/"):
         raise HTTPException(422, "Upload a PDF, DOCX, XLSX, CSV, Markdown, or text file")
-    if len(data) > MAX_UPLOAD:
-        raise HTTPException(413, "File is larger than 30 MB")
+    data = await read_limited(file, MAX_UPLOAD, "File is larger than 30 MB")
+    if not looks_like(data, ctype):
+        raise HTTPException(422, f"{filename} doesn't look like a {filename.rsplit('.', 1)[-1].upper()} file")
 
     fv = FrameworkVersion(framework_id=framework_id, status="draft", version_label=version_label,
                           version=await v.next_version_number(db, FrameworkVersion, "framework_id", framework_id),
                           parse_status="pending")
     db.add(fv)
     await db.flush()
-    key = f"frameworks/{fw.code}/{fv.id}/{file.filename}"
-    put_object(key, data, ctype)
+    key = f"frameworks/{fw.code}/{fv.id}/{filename}"
+    await aput_object(key, data, ctype)
     fv.source_storage_key = key
     await enqueue(db, type="parse_framework", ref_type="framework_version", ref_id=fv.id)
     return next(x for x in await _versions(db, framework_id) if x.id == fv.id)
@@ -166,7 +168,8 @@ async def reparse(version_id: uuid.UUID, db: ControlDB, _: SuperAdmin) -> Versio
 
 
 @router.get("/versions/{version_id}", response_model=VersionDetail)
-async def get_version(version_id: uuid.UUID, db: ControlDB, _: CurrentUser) -> VersionDetail:
+async def get_version(version_id: uuid.UUID, db: ControlDB, _: SuperAdmin) -> VersionDetail:
+    await jobs.expire_stale(db, version_id)  # a job that can no longer finish must not leave this waiting
     fv = await db.get(FrameworkVersion, version_id)
     if fv is None:
         raise HTTPException(404, "Version not found")
@@ -231,7 +234,7 @@ async def _remove_versions(db: ControlDB, versions: list[FrameworkVersion]) -> N
     for fv in versions:
         if fv.source_storage_key:
             try:
-                delete_object(fv.source_storage_key)
+                await adelete_object(fv.source_storage_key)
             except Exception:  # noqa: BLE001 - a missing file shouldn't block the delete
                 pass
         await db.delete(fv)
@@ -263,8 +266,8 @@ async def delete_framework(framework_id: uuid.UUID, db: ControlDB, _: SuperAdmin
 
 
 @router.get("/clauses/search", response_model=list[ClauseSearchOut])
-async def search_clauses(db: ControlDB, _: CurrentUser, q: str = "", framework_id: uuid.UUID | None = None,
-                         limit: int = 30) -> list[ClauseSearchOut]:
+async def search_clauses(db: ControlDB, _: SuperAdmin, q: str = "", framework_id: uuid.UUID | None = None,
+                         limit: int = Query(30, ge=1, le=100)) -> list[ClauseSearchOut]:
     """Published, assessable clauses for the requirement mapping picker."""
     stmt = (
         select(FrameworkClause, Framework)

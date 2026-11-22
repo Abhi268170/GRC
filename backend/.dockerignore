@@ -3,3 +3,7 @@ __pycache__/
 .venv/
 .pytest_cache/
 .ruff_cache/
+graphify-out/
+.env
+.env.*
+tests/

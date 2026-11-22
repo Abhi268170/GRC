@@ -61,7 +61,7 @@ class RunQuestion(IdMixin, TimestampMixin, Base):
     __tablename__ = "run_question"
 
     run_id: Mapped[uuid.UUID] = fk("assessment_run.id", ondelete="CASCADE")
-    run_domain_id: Mapped[uuid.UUID] = fk("run_domain.id", ondelete="CASCADE")
+    run_domain_id: Mapped[uuid.UUID] = fk("run_domain.id", ondelete="CASCADE", index=True)
     question_id: Mapped[uuid.UUID | None] = fk("question.id", nullable=True)
     parent_run_question_id: Mapped[uuid.UUID | None] = fk(
         "run_question.id", nullable=True, ondelete="CASCADE"
@@ -168,8 +168,8 @@ class EvaluationCitation(IdMixin, Base):
     evaluation_id: Mapped[uuid.UUID] = fk(
         "requirement_evaluation.id", ondelete="CASCADE", index=True
     )
-    response_id: Mapped[uuid.UUID | None] = fk("response.id", nullable=True, ondelete="CASCADE")
-    evidence_id: Mapped[uuid.UUID | None] = fk("evidence.id", nullable=True, ondelete="CASCADE")
+    response_id: Mapped[uuid.UUID | None] = fk("response.id", nullable=True, ondelete="CASCADE", index=True)
+    evidence_id: Mapped[uuid.UUID | None] = fk("evidence.id", nullable=True, ondelete="CASCADE", index=True)
     excerpt: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (
@@ -182,7 +182,7 @@ class Conversation(IdMixin, TimestampMixin, Base):
 
     run_id: Mapped[uuid.UUID] = fk("assessment_run.id", ondelete="CASCADE", index=True)
     kind: Mapped[str] = mapped_column(String(16), nullable=False)
-    run_domain_id: Mapped[uuid.UUID | None] = fk("run_domain.id", nullable=True, ondelete="CASCADE")
+    run_domain_id: Mapped[uuid.UUID | None] = fk("run_domain.id", nullable=True, ondelete="CASCADE", index=True)
     state: Mapped[dict] = mapped_column(JSONB, server_default="{}", nullable=False)
 
     __table_args__ = (

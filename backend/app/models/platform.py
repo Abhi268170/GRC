@@ -52,7 +52,7 @@ class Job(IdMixin, CreatedMixin, Base):
     type: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(16), server_default="queued", nullable=False)
     ref_type: Mapped[str | None] = mapped_column(String(32))
-    ref_id: Mapped[uuid.UUID | None] = mapped_column()
+    ref_id: Mapped[uuid.UUID | None] = mapped_column(index=True)  # looked up on every run and workspace page
     payload: Mapped[dict] = mapped_column(JSONB, server_default="{}", nullable=False)
     result: Mapped[dict | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)

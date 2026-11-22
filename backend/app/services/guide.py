@@ -22,11 +22,12 @@ import uuid
 from collections.abc import AsyncIterator
 
 import ai_contracts as contracts
+from fastapi import HTTPException
 from sqlalchemy import delete, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from app.core.config import get_settings
 from app.core.db import tenant_of
 from app.models import (
     AppUser,
@@ -74,6 +75,13 @@ def follow_up_limit(scope: "RunScope", req_ids: list[uuid.UUID]) -> int:
     return max(3, 2 * len(controls))
 
 
+class Busy(HTTPException):
+    """Another message is still being handled for this domain."""
+
+    def __init__(self) -> None:
+        super().__init__(409, "The guide is still working on the previous message. Wait a moment and try again.")
+
+
 class Turn:
     """One user message and the agent loop that follows it."""
 
@@ -86,7 +94,15 @@ class Turn:
 
     async def setup(self) -> None:
         self.scope = await load_run_scope(self.db, self.run.assessment_version_id)
-        self.conv = (await self.db.execute(select(Conversation).where(Conversation.run_domain_id == self.rd.id))).scalar_one()
+        # The conversation row is locked for the turn: two turns at once would each save the whole
+        # state and one would be lost. A second turn is refused instead of waiting.
+        try:
+            self.conv = (await self.db.execute(
+                select(Conversation).where(Conversation.run_domain_id == self.rd.id)
+                .with_for_update(nowait=True).execution_options(populate_existing=True))).scalar_one()
+        except DBAPIError as e:
+            await self.db.rollback()
+            raise Busy() from e
         state = dict(self.conv.state or {})
         if "system" not in state:
             name = next(d.name for d in self.scope.domains if d.avd_id == self.rd.assessment_version_domain_id)
@@ -349,7 +365,7 @@ class Turn:
 
 
 async def turn_block_reason(db: AsyncSession, run: AssessmentRun, rd: RunDomain) -> str | None:
-    if await ai.run_spend(db, run.id) >= get_settings().run_ai_budget_usd:
+    if await ai.over_budget(db, run.id):
         return "AI assistance for this assessment has reached its limit. Rate any remaining requirements in the panel."
     if await current_question(db, rd) is None:
         conv = (await db.execute(select(Conversation).where(Conversation.run_domain_id == rd.id))).scalar_one()

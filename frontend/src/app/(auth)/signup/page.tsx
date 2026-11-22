@@ -42,6 +42,7 @@ export default function SignupPage() {
     setError(null);
     try {
       const me = await api<Me>("/auth/signup", { body: form });
+      qc.clear(); // nothing cached for a previous user may be shown to this one
       qc.setQueryData(["me"], me);
       router.replace("/app");
     } catch (err) {

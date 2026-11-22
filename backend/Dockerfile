@@ -20,11 +20,11 @@ COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     if [ "$INSTALL_DEV" = "true" ]; then uv sync --frozen; else uv sync --frozen --no-dev; fi
 
-COPY . .
-COPY --from=contracts ai_contracts /app/ai_contracts
-
-RUN useradd --create-home --uid 1000 app && chown -R app /app
+RUN useradd --create-home --uid 1000 app
+COPY --chown=app . .
+COPY --chown=app --from=contracts ai_contracts /app/ai_contracts
 USER app
 
 EXPOSE 8000
+# docker-compose.yml overrides this with the production flags (proxy headers, several workers).
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--root-path", "/api"]

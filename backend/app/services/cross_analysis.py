@@ -12,7 +12,6 @@ import ai_contracts as contracts
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.core.db import tenant_of
 from app.models import AssessmentRun, EvaluationCitation, Evidence, RequirementEvaluation
 from app.services import ai
@@ -30,7 +29,7 @@ async def analyze(db: AsyncSession, run_id: uuid.UUID, payload: dict) -> dict:
     """payload: {"source": "chat"|"requirement", "text": str|None, "evidence_ids": [...],
     "target_requirement_version_id": str|None, "author": str|None}"""
     run = await db.get(AssessmentRun, run_id)
-    if await ai.run_spend(db, run.id) >= get_settings().run_ai_budget_usd:
+    if await ai.over_budget(db, run.id):
         return {"skipped": "AI budget for this assessment is used up"}
 
     evidence: list[Evidence] = []
@@ -85,7 +84,14 @@ async def analyze(db: AsyncSession, run_id: uuid.UUID, payload: dict) -> dict:
     valid_evidence = {str(ev.id) for ev in evidence}
     by_key = {r.key: (r, e) for r, e in open_reqs}
     updated = []
-    fresh = await evaluations_by_req(db, run.id)  # re-read: a person may have rated meanwhile
+    # Re-read from the database (not the session's copy) and lock the rows: a person may have rated
+    # or verified a requirement while the model was working, and their rating must win.
+    fresh = {e.requirement_version_id: e for e in (await db.execute(
+        select(RequirementEvaluation).where(RequirementEvaluation.run_id == run.id)
+        .with_for_update().execution_options(populate_existing=True))).scalars()}
+    await db.refresh(run)
+    if run.status not in ("in_progress", "changes_requested"):
+        return {"skipped": "the assessment is no longer open for answers"}
     for item in result.ratings:
         if item.requirement not in by_key:
             continue

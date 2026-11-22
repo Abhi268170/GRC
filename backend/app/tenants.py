@@ -17,8 +17,9 @@ async def _migrate() -> int:
     finally:
         await dispose_all()
     for name in failed:
-        print(f"[tenants] FAILED: {name}")
-    return 1 if failed else 0
+        print(f"[tenants] FAILED, now offline until fixed: {name}")
+    # The control database is upgraded and the other companies work: let the platform start.
+    return 0
 
 
 async def _list() -> int:

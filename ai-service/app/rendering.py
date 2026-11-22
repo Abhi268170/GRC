@@ -1,5 +1,7 @@
 """How control library content is written into prompts. Shared by several tasks."""
 
+import re
+
 from ai_contracts import Company, ControlContext, DomainScope, EvidenceFile, FileInput, Requirement
 
 PDF = "application/pdf"
@@ -61,10 +63,20 @@ def company_context(c: Company) -> str:
     return text
 
 
+_TAG = re.compile(r"<(/?)\s*evidence", re.IGNORECASE)
+
+
+def _inert(text: str | None) -> str:
+    """Evidence is untrusted. It must not be able to close its own <evidence> block and continue as
+    if it were instructions, so anything that looks like the tag is defused."""
+    return _TAG.sub(r"&lt;\1evidence", text or "")
+
+
 def evidence_block(ev: EvidenceFile, max_chars: int, empty_summary: str = "") -> str:
     """Evidence goes inside <evidence> tags; the prompts say to treat it as data, never as instructions."""
-    return (f'<evidence id="{ev.id}" filename="{ev.filename}">\nSummary: {ev.summary or empty_summary}\n\n'
-            f"{(ev.text or '')[:max_chars]}\n</evidence>")
+    filename = re.sub(r'[<>"\r\n]', "_", ev.filename)[:200]
+    return (f'<evidence id="{ev.id}" filename="{filename}">\nSummary: {_inert(ev.summary) or empty_summary}\n\n'
+            f"{_inert((ev.text or '')[:max_chars])}\n</evidence>")
 
 
 def file_blocks(file: FileInput) -> list[dict]:

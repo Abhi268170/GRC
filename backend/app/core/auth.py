@@ -26,6 +26,7 @@ def create_token(user: AppUser, tenant_id: uuid.UUID | None) -> str:
         "sub": str(user.id),
         "role": user.platform_role,
         "tid": str(tenant_id) if tenant_id else None,
+        "ver": user.token_version,
         "exp": datetime.now(UTC) + timedelta(minutes=s.jwt_expires_minutes),
     }
     return jwt.encode(payload, s.jwt_secret, algorithm=s.jwt_algorithm)
@@ -69,7 +70,7 @@ async def get_home_session(request: Request, control: ControlDB) -> AsyncIterato
         home = session_for(uuid.UUID(claims["tid"]))
         session = await home.__aenter__()
     except TenantUnavailable:
-        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account not available") from None
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "This workspace isn't available right now. Try again shortly.") from None
     try:
         yield session
     finally:
@@ -83,6 +84,9 @@ async def current_user(request: Request, db: HomeDB) -> AppUser:
     user = await db.get(AppUser, uuid.UUID(request.state.claims["sub"]))
     if user is None or not user.is_active:
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Account not available")
+    if request.state.claims.get("ver", 0) != user.token_version:
+        # The password was changed or reset, or the user signed out: older sessions end here.
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Session expired")
     # Temporary passwords only allow signing in and setting a new password.
     if user.must_change_password and not request.url.path.rstrip("/").endswith(("/auth/me", "/auth/change-password", "/auth/logout")):
         raise HTTPException(status.HTTP_403_FORBIDDEN, "Set a new password to continue")
@@ -92,9 +96,20 @@ async def current_user(request: Request, db: HomeDB) -> AppUser:
 CurrentUser = Annotated[AppUser, Depends(current_user)]
 
 
+def claims_of(request: Request) -> dict | None:
+    """The session token's claims, or None when there is no valid token. Never raises."""
+    try:
+        return _claims(request)
+    except HTTPException:
+        return None
+
+
 def require(*roles: str):
-    async def dep(user: CurrentUser) -> AppUser:
+    async def dep(user: CurrentUser, db: HomeDB) -> AppUser:
         if user.platform_role not in roles:
+            raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed")
+        # The super admin exists only in the control database, whatever a company database's rows say.
+        if (user.platform_role == "super_admin") != (tenant_of(db) is None):
             raise HTTPException(status.HTTP_403_FORBIDDEN, "Not allowed")
         return user
 

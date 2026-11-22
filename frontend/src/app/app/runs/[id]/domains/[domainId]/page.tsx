@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CheckCircle2, ChevronLeft, Circle, CircleDot, ListChecks, MessagesSquare, RotateCcw, Scale } from "lucide-react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Bar, DomainStatusBadge } from "@/components/runs/badges";
@@ -84,6 +84,14 @@ export default function DomainWorkspace() {
   });
   const reopen = useAction(() => api(`/runs/${id}/domains/${domainId}/reopen`, { method: "POST" }), { invalidate: [key, ["run", id]] });
 
+  // Leaving or reloading while the guide is answering cancels the turn and loses the message.
+  useEffect(() => {
+    if (!live) return;
+    const warn = (e: BeforeUnloadEvent) => e.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [live]);
+
   if (!ws.data) {
     return <div className="grid h-[calc(100vh-4.6rem)] gap-3 p-3 lg:grid-cols-[1fr_23rem]"><Skeleton className="h-full rounded-3xl" /><Skeleton className="h-full rounded-3xl" /></div>;
   }
@@ -91,7 +99,7 @@ export default function DomainWorkspace() {
   const allConfirmed = w.requirements.every((r) => r.evaluation && ["verified", "overridden"].includes(r.evaluation.status));
   const canComplete = w.editable && allConfirmed;
 
-  async function send(text: string, evidence: string[]) {
+  async function send(text: string, evidence: string[]): Promise<boolean> {
     setLive({ userText: text, reply: "", status: null });
     let failed: string | null = null;
     try {
@@ -106,7 +114,9 @@ export default function DomainWorkspace() {
     if (failed) toast.error(failed);
     await ws.refetch(); // saved messages, ratings and the next question
     setLive(null);
+    return !failed;
   }
+
 
   async function upload(file: File): Promise<EvidenceFile | undefined> {
     const form = new FormData();

@@ -56,7 +56,7 @@ assert {c.key for c in CATEGORIES} == set(MASTER_DATA_CATEGORIES)
 
 
 @router.get("/categories", response_model=list[CategoryOut])
-async def list_categories(_: CurrentUser) -> list[CategoryOut]:
+async def list_categories(_: SuperAdmin) -> list[CategoryOut]:
     return CATEGORIES
 
 
@@ -85,7 +85,7 @@ class ItemEdit(BaseModel):
 
 
 @router.get("", response_model=list[ItemOut])
-async def list_items(db: ControlDB, _: CurrentUser, category: str | None = None) -> list[MasterDataItem]:
+async def list_items(db: ControlDB, _: SuperAdmin, category: str | None = None) -> list[MasterDataItem]:
     stmt = select(MasterDataItem).order_by(MasterDataItem.category, MasterDataItem.sort_order)
     if category:
         stmt = stmt.where(MasterDataItem.category == category)
@@ -107,7 +107,7 @@ async def create_item(body: ItemCreate, db: ControlDB, _: SuperAdmin) -> MasterD
                           description=body.description, sort_order=last + 1)
     db.add(item)
     await db.commit()
-    await enqueue_task("fanout_master_data")  # every company database keeps a copy
+    await enqueue_task("fanout_master_data", job_id="fanout_master_data")  # every company database keeps a copy
     return item
 
 
@@ -120,7 +120,7 @@ async def edit_item(item_id: uuid.UUID, body: ItemEdit, db: ControlDB, _: SuperA
         raise HTTPException(409, "These values can't be deactivated because scoring depends on them")
     item.label, item.description, item.is_active = body.label, body.description, body.is_active
     await db.commit()
-    await enqueue_task("fanout_master_data")  # every company database keeps a copy
+    await enqueue_task("fanout_master_data", job_id="fanout_master_data")  # every company database keeps a copy
     return item
 
 
@@ -181,7 +181,7 @@ async def create_role(body: RoleFields, db: ControlDB, _: SuperAdmin) -> Organis
     _apply_role(role, body)
     db.add(role)
     await db.commit()
-    await enqueue_task("fanout_master_data")  # every company database keeps a copy
+    await enqueue_task("fanout_master_data", job_id="fanout_master_data")  # every company database keeps a copy
     return role
 
 
@@ -193,5 +193,5 @@ async def edit_role(role_id: uuid.UUID, body: RoleFields, db: ControlDB, _: Supe
     await _check_role_body(db, body, role_id)
     _apply_role(role, body)
     await db.commit()
-    await enqueue_task("fanout_master_data")  # every company database keeps a copy
+    await enqueue_task("fanout_master_data", job_id="fanout_master_data")  # every company database keeps a copy
     return role

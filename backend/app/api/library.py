@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import delete, func, select, text
 
-from app.core.auth import ControlDB, CurrentUser, SuperAdmin
+from app.core.auth import ControlDB, SuperAdmin
 from app.models import (
     Control,
     ControlVersion,
@@ -224,7 +224,7 @@ def _dv(row: DomainVersion | None) -> DomainVersionOut | None:
 
 
 @router.get("/domains", response_model=list[DomainOut])
-async def list_domains(db: ControlDB, _: CurrentUser) -> list[DomainOut]:
+async def list_domains(db: ControlDB, _: SuperAdmin) -> list[DomainOut]:
     domains = (await db.execute(select(Domain).order_by(Domain.abbreviation))).scalars().all()
     versions = (
         await db.execute(select(DomainVersion).where(DomainVersion.status.in_(("draft", "published"))))
@@ -406,7 +406,7 @@ async def _control_version_out(db: ControlDB, cv: ControlVersion | None, control
 
 
 @router.get("/controls", response_model=list[ControlSummary])
-async def list_controls(db: ControlDB, _: CurrentUser, domain_id: uuid.UUID | None = None,
+async def list_controls(db: ControlDB, _: SuperAdmin, domain_id: uuid.UUID | None = None,
                         q: str | None = None) -> list[ControlSummary]:
     stmt = (
         select(ControlVersion, Control.code)
@@ -463,7 +463,7 @@ async def list_controls(db: ControlDB, _: CurrentUser, domain_id: uuid.UUID | No
 
 
 @router.get("/controls/{control_id}", response_model=ControlDetail)
-async def get_control(control_id: uuid.UUID, db: ControlDB, _: CurrentUser) -> ControlDetail:
+async def get_control(control_id: uuid.UUID, db: ControlDB, _: SuperAdmin) -> ControlDetail:
     control = await db.get(Control, control_id)
     if control is None:
         raise HTTPException(404, "Control not found")

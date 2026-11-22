@@ -2,51 +2,58 @@
 
 Each job function receives the `job` row id and the tenant whose database holds that row
 (None = the control database), marks the job running/done/failed, and updates the object
-it works on. The fan-out functions at the end do work that spans every company database."""
+it works on. What a failure means for that object is in services/jobs.py. The fan-out
+functions at the end do work that spans every company database."""
 
+import asyncio
 import logging
-import traceback
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 
-from arq import Retry
+from arq import Retry, func
 from arq.connections import RedisSettings
+from sqlalchemy import select
 
+from app.core import logs
 from app.core.config import get_settings
-from app.core.db import session_for
-from app.models import AssessmentRun, AssessmentVersion, Evidence, FrameworkVersion, Job
-from app.services import cross_analysis, evidence, framework_parser, intake, outputs, question_gen, tenants
+from app.core.db import dispose_all, session_for
+from app.models import AppUser, AssessmentRun, AssessmentVersion, Evidence, FrameworkVersion, Job, Notification
+from app.services import ai, cross_analysis, evidence, framework_parser, intake, jobs, outputs, question_gen, tenants
 
-logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("worker")
 
+CROSS_ANALYSIS_TRIES = 15  # waits for evidence to be read: one try every 8 seconds, two minutes in all
 
-async def _run(job_id: str, tenant_id: str | None, work: Callable[[object, Job], Awaitable[dict]], on_fail=None) -> None:
+
+async def _run(job_id: str, tenant_id: str | None, work: Callable[[object, Job], Awaitable[dict]]) -> None:
+    logs.request_id.set(f"job-{job_id[:8]}")
     async with session_for(uuid.UUID(tenant_id) if tenant_id else None) as db:
         job = await db.get(Job, uuid.UUID(job_id))
-        if job is None:
-            return
+        if job is None or job.status in ("done", "failed"):
+            return  # unknown, or delivered again after it was already settled
         job.status, job.started_at, job.attempts = "running", datetime.now(UTC), job.attempts + 1
         await db.commit()
         try:
             job.result = await work(db, job)
-            job.status = "done"
+            job.status, job.finished_at = "done", datetime.now(UTC)
+            await db.commit()
         except Retry:
             await db.rollback()
             job = await db.get(Job, uuid.UUID(job_id))
             job.status = "queued"
             await db.commit()
             raise
-        except Exception as e:  # noqa: BLE001
+        except BaseException as e:
+            # Also when the worker stops the job (time limit, shutdown): the row must never stay "running".
+            interrupted = isinstance(e, asyncio.CancelledError)
+            log.error("job %s (%s) %s", job_id, job.type, "was interrupted" if interrupted else "failed", exc_info=not interrupted)
             await db.rollback()
             job = await db.get(Job, uuid.UUID(job_id))
-            job.status, job.error = "failed", str(e)[:2000]
-            log.error("job %s failed: %s", job_id, traceback.format_exc())
-            if on_fail:
-                await on_fail(db, job, str(e))
-        job.finished_at = datetime.now(UTC)
-        await db.commit()
+            await jobs.fail(db, job, jobs.INTERRUPTED if interrupted else jobs.safe_message(e))
+            await db.commit()
+            if interrupted or not isinstance(e, Exception):
+                raise
 
 
 async def parse_framework(ctx: dict, job_id: str, tenant_id: str | None = None) -> None:
@@ -59,12 +66,7 @@ async def parse_framework(ctx: dict, job_id: str, tenant_id: str | None = None) 
         await db.commit()
         return {"clauses": count}
 
-    async def fail(db, job: Job, error: str) -> None:
-        version = await db.get(FrameworkVersion, job.ref_id)
-        if version:
-            version.parse_status, version.parse_error = "failed", error[:2000]
-
-    await _run(job_id, tenant_id, work, fail)
+    await _run(job_id, tenant_id, work)
 
 
 async def generate_questions(ctx: dict, job_id: str, tenant_id: str | None = None) -> None:
@@ -77,12 +79,7 @@ async def generate_questions(ctx: dict, job_id: str, tenant_id: str | None = Non
         await db.commit()
         return result
 
-    async def fail(db, job: Job, error: str) -> None:
-        version = await db.get(AssessmentVersion, job.ref_id)
-        if version:
-            version.generation_status = "failed"
-
-    await _run(job_id, tenant_id, work, fail)
+    await _run(job_id, tenant_id, work)
 
 
 async def generate_intake(ctx: dict, job_id: str, tenant_id: str | None = None) -> None:
@@ -91,12 +88,7 @@ async def generate_intake(ctx: dict, job_id: str, tenant_id: str | None = None) 
         await db.commit()
         return result
 
-    async def fail(db, job: Job, error: str) -> None:
-        run = await db.get(AssessmentRun, job.ref_id)
-        if run:  # fall back to no intake: the assessment can still be answered untailored
-            run.intake_summary, run.status = {"status": "skipped", "error": error[:500]}, "in_progress"
-
-    await _run(job_id, tenant_id, work, fail)
+    await _run(job_id, tenant_id, work)
 
 
 async def tailor_questions(ctx: dict, job_id: str, tenant_id: str | None = None) -> None:
@@ -105,13 +97,7 @@ async def tailor_questions(ctx: dict, job_id: str, tenant_id: str | None = None)
         await db.commit()
         return result
 
-    async def fail(db, job: Job, error: str) -> None:
-        run = await db.get(AssessmentRun, job.ref_id)
-        if run:  # keep the original questions if tailoring fails
-            run.intake_summary = {**(run.intake_summary or {}), "status": "tailor_failed"}
-            run.status = "in_progress"
-
-    await _run(job_id, tenant_id, work, fail)
+    await _run(job_id, tenant_id, work)
 
 
 async def process_evidence(ctx: dict, job_id: str, tenant_id: str | None = None) -> None:
@@ -123,12 +109,7 @@ async def process_evidence(ctx: dict, job_id: str, tenant_id: str | None = None)
         await db.commit()
         return result
 
-    async def fail(db, job: Job, error: str) -> None:
-        ev = await db.get(Evidence, job.ref_id)
-        if ev:
-            ev.processing_status, ev.processing_error = "failed", error[:2000]
-
-    await _run(job_id, tenant_id, work, fail)
+    await _run(job_id, tenant_id, work)
 
 
 async def generate_outputs(ctx: dict, job_id: str, tenant_id: str | None = None) -> None:
@@ -140,19 +121,10 @@ async def generate_outputs(ctx: dict, job_id: str, tenant_id: str | None = None)
         await db.commit()
         return result
 
-    async def fail(db, job: Job, error: str) -> None:
-        run = await db.get(AssessmentRun, job.ref_id)
-        if run:  # back to an editable state so it can be submitted again
-            run.status = "in_progress"
-
-    await _run(job_id, tenant_id, work, fail)
+    await _run(job_id, tenant_id, work)
 
 
 async def _notify_reviewers(db, run: AssessmentRun) -> None:
-    from sqlalchemy import select
-
-    from app.models import AppUser, Notification
-
     admins = (await db.execute(select(AppUser.id).where(AppUser.platform_role == "tenant_admin", AppUser.is_active))).scalars().all()
     for uid in {run.started_by, *admins}:
         db.add(Notification(user_id=uid, type="run_submitted",
@@ -164,6 +136,9 @@ async def cross_analyze(ctx: dict, job_id: str, tenant_id: str | None = None) ->
         try:
             result = await cross_analysis.analyze(db, job.ref_id, job.payload)
         except cross_analysis.EvidenceNotReady:
+            if ctx.get("job_try", 1) >= CROSS_ANALYSIS_TRIES:
+                # Out of tries: settle the job, or the page would wait for this analysis forever.
+                return {"skipped": "the evidence was still being read"}
             raise Retry(defer=8) from None  # evidence still being read; try again shortly
         await db.commit()
         return result
@@ -192,10 +167,34 @@ async def ping(ctx: dict) -> str:
     return "pong"
 
 
+async def startup(ctx: dict) -> None:
+    logs.setup(get_settings().log_level)
+
+
+async def shutdown(ctx: dict) -> None:
+    await ai.close()
+    await dispose_all()
+
+
+def _job(coroutine, **options):
+    """A job function with its own time limit (services/jobs.py). One try unless said otherwise:
+    a job that failed once is reported to the user, who decides whether to try again."""
+    return func(coroutine, timeout=jobs.TIMEOUTS.get(coroutine.__name__, jobs.DEFAULT_TIMEOUT),
+                max_tries=options.pop("max_tries", 1), **options)
+
+
 class WorkerSettings:
-    functions = [ping, parse_framework, generate_questions, generate_intake, tailor_questions, process_evidence, generate_outputs,
-                 cross_analyze, fanout_master_data, fanout_deprecation]
+    functions = [
+        ping,
+        _job(parse_framework), _job(generate_questions), _job(generate_intake), _job(tailor_questions),
+        _job(process_evidence), _job(generate_outputs),
+        _job(cross_analyze, max_tries=CROSS_ANALYSIS_TRIES),
+        # keep_result=0 frees the fixed job id as soon as the fan-out ends, so the next change can queue one.
+        func(fanout_master_data, timeout=1800, max_tries=2, keep_result=0),
+        func(fanout_deprecation, timeout=1800, max_tries=1),
+    ]
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
-    job_timeout = 1800
-    max_tries = 15  # only jobs that raise Retry (cross-analysis waiting for evidence) are retried
-    max_jobs = 4
+    on_startup = startup
+    on_shutdown = shutdown
+    max_jobs = get_settings().worker_max_jobs
+    health_check_interval = 30  # `arq --check app.worker.WorkerSettings` reads this heartbeat

@@ -29,6 +29,7 @@ export default function LoginPage() {
     setError(null);
     try {
       const me = await api<Me>("/auth/login", { body: { email, password } });
+      qc.clear(); // nothing cached for a previous user may be shown to this one
       qc.setQueryData(["me"], me);
       router.replace(homeFor(me));
     } catch (err) {

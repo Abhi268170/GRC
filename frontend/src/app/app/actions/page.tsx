@@ -9,7 +9,7 @@ import { ActionDialog, SourceLink } from "@/components/runs/registers";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
-import { formatDate } from "@/lib/format";
+import { formatDate, isOverdue } from "@/lib/format";
 import type { ActionItem } from "@/lib/types";
 
 const PRIORITY: Record<string, string> = {
@@ -26,7 +26,7 @@ export default function ActionsPage() {
   const [editing, setEditing] = useState<ActionItem | null>(null);
   const all = items.data ?? [];
   const shown = all.filter((a) => (filter === "active" ? ["open", "in_progress"].includes(a.status) : filter === "all" ? true : a.status === filter));
-  const overdue = all.filter((a) => a.due_date && a.status !== "done" && a.status !== "dismissed" && new Date(a.due_date) < new Date()).length;
+  const overdue = all.filter((a) => a.status !== "done" && a.status !== "dismissed" && isOverdue(a.due_date)).length;
 
   return (
     <>
@@ -53,7 +53,7 @@ export default function ActionsPage() {
               </div>
               <div className="hidden w-32 shrink-0 text-right text-xs sm:block">
                 <p>{a.owner?.full_name ?? <span className="text-muted-foreground">Unassigned</span>}</p>
-                <p className={a.due_date && new Date(a.due_date) < new Date() && a.status !== "done" ? "text-destructive" : "text-muted-foreground"}>{a.due_date ? `Due ${formatDate(a.due_date)}` : "No due date"}</p>
+                <p className={isOverdue(a.due_date) && a.status !== "done" ? "text-destructive" : "text-muted-foreground"}>{a.due_date ? `Due ${formatDate(a.due_date)}` : "No due date"}</p>
               </div>
               <Badge variant="secondary" className="shrink-0">{STATUS[a.status]}</Badge>
             </button>

@@ -26,8 +26,8 @@ class RiskRow(RiskOut):
 
 
 class ActionEdit(BaseModel):
-    title: str = Field(min_length=3)
-    description: str | None = None
+    title: str = Field(min_length=3, max_length=300)
+    description: str | None = Field(default=None, max_length=8000)
     priority: str = Field(pattern="^(low|medium|high|critical)$")
     status: str = Field(pattern="^(suggested|open|in_progress|done|dismissed)$")
     owner_id: uuid.UUID | None = None
@@ -35,9 +35,9 @@ class ActionEdit(BaseModel):
 
 
 class RiskEdit(BaseModel):
-    title: str = Field(min_length=3)
-    description: str | None = None
-    category: str | None = None
+    title: str = Field(min_length=3, max_length=300)
+    description: str | None = Field(default=None, max_length=8000)
+    category: str | None = Field(default=None, max_length=64)
     likelihood: int = Field(ge=1, le=5)
     impact: int = Field(ge=1, le=5)
     treatment: str | None = Field(default=None, pattern="^(mitigate|accept|transfer|avoid)$")
@@ -60,13 +60,21 @@ async def _check_owner(db: TenantDB, me: AppUser, owner_id: uuid.UUID | None) ->
             raise HTTPException(422, "Unknown team member")
 
 
-async def _editable(db: TenantDB, me: AppUser, item) -> None:
+async def _editable(db: TenantDB, me: AppUser, item, new_status: str) -> None:
+    """Who may change an action item or risk: a tenant admin, its owner, or a reviewer of the run it
+    came from. A suggestion under review belongs to the run's reviewers only, and nothing goes back
+    to being a suggestion once it has left that state."""
     if item is None:
         raise HTTPException(404, "Not found")
-    if item.run_id:
-        run = await db.get(AssessmentRun, item.run_id)
-        if item.status == "suggested" and not svc.can_review(me, run):
+    run = await db.get(AssessmentRun, item.run_id) if item.run_id else None
+    reviewer = me.platform_role == "tenant_admin" or (run is not None and svc.can_review(me, run))
+    if item.status == "suggested":
+        if not reviewer:
             raise HTTPException(403, "Only reviewers can change suggestions under review")
+    elif not (reviewer or item.owner_id == me.id):
+        raise HTTPException(403, "Only an admin, the owner, or the assessment's reviewer can change this")
+    if new_status == "suggested" and item.status != "suggested":
+        raise HTTPException(422, "An item can't go back to being a suggestion")
 
 
 @router.get("/action-items", response_model=list[ActionRow])
@@ -84,7 +92,7 @@ async def list_actions(db: TenantDB, me: TenantMember) -> list[ActionRow]:
 @router.put("/action-items/{item_id}", response_model=ActionOut)
 async def edit_action(item_id: uuid.UUID, body: ActionEdit, db: TenantDB, me: TenantMember) -> ActionOut:
     item = await db.get(ActionItem, item_id)
-    await _editable(db, me, item)
+    await _editable(db, me, item, body.status)
     await _check_owner(db, me, body.owner_id)
     for k, v in body.model_dump().items():
         setattr(item, k, v)
@@ -108,7 +116,7 @@ async def list_risks(db: TenantDB, me: TenantMember) -> list[RiskRow]:
 @router.put("/risks/{risk_id}", response_model=RiskOut)
 async def edit_risk(risk_id: uuid.UUID, body: RiskEdit, db: TenantDB, me: TenantMember) -> RiskOut:
     risk = await db.get(Risk, risk_id)
-    await _editable(db, me, risk)
+    await _editable(db, me, risk, body.status)
     await _check_owner(db, me, body.owner_id)
     for k, v in body.model_dump().items():
         setattr(risk, k, v)

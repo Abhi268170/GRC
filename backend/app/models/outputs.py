@@ -117,7 +117,7 @@ class ReviewComment(IdMixin, CreatedMixin, Base):
     __tablename__ = "review_comment"
 
     run_id: Mapped[uuid.UUID] = fk("assessment_run.id", ondelete="CASCADE", index=True)
-    run_domain_id: Mapped[uuid.UUID | None] = fk("run_domain.id", nullable=True, ondelete="CASCADE")
+    run_domain_id: Mapped[uuid.UUID | None] = fk("run_domain.id", nullable=True, ondelete="CASCADE", index=True)
     target_type: Mapped[str] = mapped_column(String(16), nullable=False)
     target_id: Mapped[uuid.UUID | None] = mapped_column()
     comment: Mapped[str] = mapped_column(Text, nullable=False)

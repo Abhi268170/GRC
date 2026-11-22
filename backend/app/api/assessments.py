@@ -24,7 +24,7 @@ from app.models import (
     Requirement,
     RequirementVersion,
 )
-from app.services import ai, question_gen, tenants
+from app.services import ai, jobs, question_gen, tenants
 from app.services import versioning as v
 
 router = APIRouter(prefix="/assessments", tags=["assessments"])
@@ -288,6 +288,7 @@ async def create_assessment(body: AssessmentCreate, db: ControlDB, user: SuperAd
 
 @router.get("/versions/{version_id}", response_model=VersionDetail)
 async def get_version(version_id: uuid.UUID, db: ControlDB, _: SuperAdmin) -> VersionDetail:
+    await jobs.expire_stale(db, version_id)  # a job that can no longer finish must not leave this waiting
     av = await db.get(AssessmentVersion, version_id)
     if av is None:
         raise HTTPException(404, "Assessment version not found")

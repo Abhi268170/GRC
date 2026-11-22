@@ -1,4 +1,11 @@
+# Production-shaped stack. Only the reverse proxy is published; everything else talks on the
+# internal network. For development (hot reload, published ports, no proxy) add the override:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 name: grc
+
+x-logging: &logging
+  driver: json-file
+  options: { max-size: "10m", max-file: "5" }
 
 x-backend-env: &backend-env
   ENVIRONMENT: ${ENVIRONMENT:-development}
@@ -11,6 +18,14 @@ x-backend-env: &backend-env
   JWT_SECRET: ${JWT_SECRET}
   SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL}
   SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  SIGNUP_ENABLED: ${SIGNUP_ENABLED:-true}
+  SIGNUP_MAX_PER_IP: ${SIGNUP_MAX_PER_IP:-5}
+  SIGNUP_MAX_TOTAL: ${SIGNUP_MAX_TOTAL:-60}
+  TENANT_AI_BUDGET_USD_MONTH: ${TENANT_AI_BUDGET_USD_MONTH:-100}
+  MAX_OPEN_RUNS_PER_TENANT: ${MAX_OPEN_RUNS_PER_TENANT:-25}
+  TENANT_POOL_CACHE_SIZE: ${TENANT_POOL_CACHE_SIZE:-50}
+  WORKER_MAX_JOBS: ${WORKER_MAX_JOBS:-8}
   AI_SERVICE_URL: http://ai-service:8100
   AI_SERVICE_TOKEN: ${AI_SERVICE_TOKEN:-}
   RUN_AI_BUDGET_USD: ${RUN_AI_BUDGET_USD:-3}
@@ -25,6 +40,10 @@ x-backend-build: &backend-build
 services:
   postgres:
     image: pgvector/pgvector:0.8.7-pg17-trixie
+    # Every company database keeps its own small connection pool per backend and worker process.
+    # Past a few hundred companies, put PgBouncer in front (see TENANT_DATABASE_PLAN.md).
+    command: ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-300}"]
+    logging: *logging
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -40,7 +59,9 @@ services:
 
   redis:
     image: redis:8.6.8-alpine
-    command: ["redis-server", "--appendonly", "yes"]
+    # The job queue must never drop entries to make room: refuse writes instead when memory is full.
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    logging: *logging
     volumes:
       - redis_data:/data
     healthcheck:
@@ -55,17 +76,19 @@ services:
     environment:
       RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
       RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY}
-      RUSTFS_CONSOLE_ENABLE: "true"
+      RUSTFS_CONSOLE_ENABLE: "false"
     volumes:
       - rustfs_data:/data
     # The image ships without curl/wget, so readiness is checked by the
     # migrate service (which retries until the bucket can be created).
+    logging: *logging
     restart: unless-stopped
 
   migrate:
     build: *backend-build
     command: ["python", "-m", "app.bootstrap"]
     environment: *backend-env
+    logging: *logging
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
@@ -86,6 +109,9 @@ services:
       AI_MODEL_CONVERSATION: ${AI_MODEL_CONVERSATION:-claude-sonnet-5-5}
       AI_MODEL_ANALYSIS: ${AI_MODEL_ANALYSIS:-claude-opus-5-5}
       AI_MAX_CONCURRENT_CALLS: ${AI_MAX_CONCURRENT_CALLS:-16}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    mem_limit: ${AI_SERVICE_MEMORY:-1g}
+    logging: *logging
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8100/health/live')"]
       interval: 10s
@@ -95,17 +121,20 @@ services:
 
   backend:
     build: *backend-build
+    # Behind the proxy: trust its X-Forwarded-* headers (the backend is not reachable from outside),
+    # run several processes, and give in-flight requests 30 seconds on shutdown.
+    command: ["sh", "-c", "exec uvicorn app.main:app --host 0.0.0.0 --port 8000 --root-path /api --proxy-headers --forwarded-allow-ips '*' --workers ${BACKEND_WORKERS:-2} --timeout-graceful-shutdown 30"]
     environment: *backend-env
     depends_on:
       migrate: { condition: service_completed_successfully }
       ai-service: { condition: service_started }
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
       interval: 10s
       timeout: 3s
       retries: 10
+    mem_limit: ${BACKEND_MEMORY:-2g}
+    logging: *logging
     restart: unless-stopped
 
   worker:
@@ -115,6 +144,15 @@ services:
     depends_on:
       migrate: { condition: service_completed_successfully }
       ai-service: { condition: service_started }
+    healthcheck:
+      test: ["CMD", "arq", "--check", "app.worker.WorkerSettings"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    # The worker reads uploaded files. The limit keeps one hostile file from taking the host down.
+    mem_limit: ${WORKER_MEMORY:-2g}
+    logging: *logging
     restart: unless-stopped
 
   frontend:
@@ -127,11 +165,37 @@ services:
       BACKEND_URL: http://backend:8000
     depends_on:
       backend: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:3000/login"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    mem_limit: ${FRONTEND_MEMORY:-1g}
+    logging: *logging
+    restart: unless-stopped
+
+  # The only published service: TLS, compression, security headers, request size limit, and
+  # routing (/api to the backend, everything else to the frontend). See deploy/Caddyfile.
+  proxy:
+    image: caddy:2.10.2-alpine
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
     ports:
-      - "${FRONTEND_PORT:-3000}:3000"
+      - "${HTTP_PORT:-80}:80"
+      - "${HTTPS_PORT:-443}:443"
+    depends_on:
+      backend: { condition: service_healthy }
+      frontend: { condition: service_started }
+    logging: *logging
     restart: unless-stopped
 
 volumes:
   postgres_data:
   redis_data:
   rustfs_data:
+  caddy_data:
+  caddy_config:

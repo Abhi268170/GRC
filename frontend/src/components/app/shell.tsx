@@ -15,7 +15,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Sheet, SheetContent, SheetTitle } from "@/components/ui/sheet";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { formatDate, initials } from "@/lib/format";
 import { useMe } from "@/lib/hooks";
 import { homeFor } from "@/lib/routes";
@@ -75,12 +75,12 @@ const NOTIFICATION_TEXT: Record<string, (p: Record<string, unknown>) => string> 
 
 function Notifications() {
   const qc = useQueryClient();
-  const { data = [] } = useQuery({ queryKey: ["notifications"], queryFn: () => api<Notification[]>("/notifications"), refetchInterval: 60_000 });
+  const { data = [] } = useQuery({ queryKey: ["notifications"], queryFn: () => api<Notification[]>("/notifications"), refetchInterval: 60_000, throwOnError: false });
   const unread = data.filter((n) => !n.read_at).length;
   return (
     <Popover onOpenChange={async (open) => {
       if (!open && unread) {
-        await api("/notifications/read-all", { method: "POST" });
+        await api("/notifications/read-all", { method: "POST" }).catch(() => {});
         qc.invalidateQueries({ queryKey: ["notifications"] });
       }
     }}>
@@ -117,9 +117,14 @@ function UserMenu({ me }: { me: Me }) {
   const qc = useQueryClient();
   const { setTheme } = useTheme();
   async function signOut() {
-    await api("/auth/logout", { method: "POST" });
-    qc.clear();
-    router.replace("/login");
+    try {
+      await api("/auth/logout", { method: "POST" });
+    } catch {
+      // Even if the server can't be reached, this browser is signed out below.
+    } finally {
+      qc.clear();
+      router.replace("/login");
+    }
   }
   return (
     <DropdownMenu>
@@ -156,20 +161,32 @@ const ROLE_LABEL: Record<PlatformRole, string> = { super_admin: "Platform admin"
 
 export function AppShell({ roles, sections, children }: { roles: PlatformRole[]; sections: NavSection[]; children: React.ReactNode }) {
   const router = useRouter();
-  const { data: me, isError } = useMe();
+  const qc = useQueryClient();
+  const { data: me, error, refetch, isFetching } = useMe();
+  // Only "not signed in" sends the user to the login page. A server restart or a network blip must not.
+  const signedOut = error instanceof ApiError && error.status === 401;
   const [mobileOpen, setMobileOpen] = useState(false);
   const fullBleed = usePathname().includes("/domains/");
   const allowed = me && roles.includes(me.user.platform_role) && !me.user.must_change_password;
 
   useEffect(() => {
-    if (isError) router.replace("/login");
-    else if (me && !allowed) router.replace(homeFor(me));
-  }, [me, isError, allowed, router]);
+    if (signedOut) {
+      qc.clear(); // nothing of the previous session may show up for the next person who signs in
+      router.replace("/login");
+    } else if (me && !allowed) router.replace(homeFor(me));
+  }, [me, signedOut, allowed, router, qc]);
 
   if (!allowed) {
     return (
-      <div className="flex min-h-screen items-center justify-center">
-        <Loader2 className="size-5 animate-spin text-muted-foreground" />
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 px-6 text-center">
+        {error && !signedOut && !me ? (
+          <>
+            <p className="text-sm text-muted-foreground">We can&apos;t reach the server right now.</p>
+            <Button variant="outline" onClick={() => refetch()} disabled={isFetching}>Try again</Button>
+          </>
+        ) : (
+          <Loader2 className="size-5 animate-spin text-muted-foreground" />
+        )}
       </div>
     );
   }

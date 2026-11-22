@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, String, Text, text
+from sqlalchemy import Boolean, CheckConstraint, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -10,7 +10,8 @@ from app.models.common import fk, ts
 
 PLATFORM_ROLES = ("super_admin", "tenant_admin", "tenant_user")
 EMPLOYEE_RANGES = ("1-10", "11-50", "51-200", "201-1000", "1000+")
-TENANT_STATUS = ("provisioning", "active")
+# migration_failed: its database could not be upgraded on deploy; the company is offline until it is.
+TENANT_STATUS = ("provisioning", "active", "migration_failed")
 
 
 class Tenant(IdMixin, TimestampMixin, Base):
@@ -60,5 +61,8 @@ class AppUser(IdMixin, TimestampMixin, Base):
     must_change_password: Mapped[bool] = mapped_column(Boolean, server_default="false", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, server_default="true", nullable=False)
     last_login_at: Mapped[datetime | None] = ts()
+    # Part of every session token. Raising it signs the user out everywhere (password change,
+    # reset, deactivation, logout).
+    token_version: Mapped[int] = mapped_column(Integer, server_default="0", nullable=False)
 
     __table_args__ = (one_of("platform_role", PLATFORM_ROLES),)

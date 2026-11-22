@@ -3,23 +3,17 @@
 import { useMutation, useQuery, useQueryClient, type QueryKey } from "@tanstack/react-query";
 import { toast } from "sonner";
 
-import { api, errorMessage } from "./api";
-import type { MasterDataItem, Me } from "./types";
+import { api, ApiError, errorMessage } from "./api";
+import type { Me } from "./types";
 
 export function useMe() {
   return useQuery({
     queryKey: ["me"],
     queryFn: () => api<Me>("/auth/me"),
-    retry: false,
+    // Being signed out is an answer, not a failure: don't retry it. Retry anything else (a restart, a blip).
+    retry: (count, error) => !(error instanceof ApiError && error.status === 401) && count < 2,
     staleTime: 60_000,
-  });
-}
-
-export function useMasterData(category: string) {
-  return useQuery({
-    queryKey: ["master-data", category],
-    queryFn: () => api<MasterDataItem[]>(`/master-data?category=${category}`),
-    staleTime: 5 * 60_000,
+    throwOnError: false, // the shell decides what a failure means
   });
 }
 

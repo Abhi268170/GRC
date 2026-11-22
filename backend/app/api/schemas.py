@@ -35,7 +35,7 @@ class MeOut(BaseModel):
 
 class LoginIn(BaseModel):
     email: EmailStr
-    password: str
+    password: str = Field(max_length=200)
 
 
 class SignupIn(BaseModel):
@@ -48,5 +48,5 @@ class SignupIn(BaseModel):
 
 
 class ChangePasswordIn(BaseModel):
-    current_password: str
+    current_password: str = Field(max_length=200)
     new_password: str = Field(min_length=10, max_length=200)

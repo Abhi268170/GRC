@@ -11,12 +11,11 @@ import ai_contracts as contracts
 from pypdf import PdfReader
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import get_settings
 from app.core.db import tenant_of
 from app.core.storage import get_object
 from app.models import Evidence
 from app.services import ai
-from app.services.documents import IMAGES, PDF, file_input, to_text
+from app.services.documents import IMAGES, MAX_PDF_PAGES, PDF, FileTooLarge, file_input, to_text
 
 MAX_TEXT = 60_000  # characters kept per file for analysis
 
@@ -24,7 +23,7 @@ MAX_TEXT = 60_000  # characters kept per file for analysis
 def pdf_text(data: bytes) -> str:
     try:
         reader = PdfReader(io.BytesIO(data))
-        return "\n".join((page.extract_text() or "") for page in reader.pages)
+        return "\n".join((page.extract_text() or "") for page in reader.pages[:MAX_PDF_PAGES])
     except Exception:  # noqa: BLE001 - unreadable PDFs fall back to the model reading the file
         return ""
 
@@ -33,7 +32,7 @@ async def process(db: AsyncSession, evidence_id: uuid.UUID) -> dict:
     ev = await db.get(Evidence, evidence_id)
     if ev.processing_status == "ready":
         return {"skipped": "already processed"}
-    if await ai.run_spend(db, ev.run_id) >= get_settings().run_ai_budget_usd:
+    if await ai.over_budget(db, ev.run_id):
         raise ai.AIError("AI assistance for this assessment has reached its limit")
     data = await asyncio.to_thread(get_object, ev.storage_key)
 
@@ -41,7 +40,10 @@ async def process(db: AsyncSession, evidence_id: uuid.UUID) -> dict:
     if ev.content_type == PDF:
         text = await asyncio.to_thread(pdf_text, data)
     elif ev.content_type not in IMAGES:
-        text = await asyncio.to_thread(to_text, data, ev.content_type)
+        try:
+            text = await asyncio.to_thread(to_text, data, ev.content_type)
+        except FileTooLarge as e:
+            raise ai.AIError(str(e)) from e
 
     # Images and scanned PDFs have no text to extract: the model reads the file and transcribes it.
     needs_model_read = ev.content_type in IMAGES or (ev.content_type == PDF and len(text.strip()) < 200)

@@ -1,0 +1,52 @@
+# Reverse proxy in front of the app: the only service published to the outside.
+#
+# SITE_ADDRESS decides how it listens:
+#   :80                 plain HTTP on any host name (local use, or behind another TLS terminator)
+#   app.example.com     that host, with HTTPS certificates obtained and renewed automatically
+{$SITE_ADDRESS::80} {
+	# No request body may be larger than the API accepts (the largest upload is 30 MB).
+	request_body {
+		max_size 32MB
+	}
+
+	header {
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Content-Security-Policy "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+		Strict-Transport-Security "max-age=31536000"
+		-Server
+		-X-Powered-By
+	}
+
+	# Compress pages, scripts and API answers. Streamed AI replies (text/event-stream) are left
+	# alone: compressing them would hold the text back until the reply ends.
+	encode {
+		zstd
+		gzip
+		match {
+			header Content-Type text/html*
+			header Content-Type text/css*
+			header Content-Type text/plain*
+			header Content-Type text/javascript*
+			header Content-Type application/javascript*
+			header Content-Type application/json*
+			header Content-Type image/svg+xml*
+		}
+	}
+
+	# The API is served under /api. Requests go straight to the backend, not through the frontend.
+	handle_path /api/* {
+		reverse_proxy backend:8000 {
+			flush_interval -1
+			transport http {
+				read_timeout 15m
+			}
+		}
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}

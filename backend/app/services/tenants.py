@@ -4,8 +4,10 @@ See TENANT_DATABASE_PLAN.md."""
 import asyncio
 import logging
 import re
+import time
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from pathlib import Path
 from typing import TypeVar
 
@@ -137,8 +139,10 @@ async def remove_tenant(control: AsyncSession, tenant_id: uuid.UUID, db_name: st
 
 
 async def remove_unfinished(control: AsyncSession) -> int:
-    """Companies left half set up by a signup that was interrupted. Only safe while no signup is running."""
-    unfinished = (await control.execute(select(Tenant.id, Tenant.db_name).where(Tenant.status == "provisioning"))).all()
+    """Companies left half set up by a signup that was interrupted. A signup takes seconds, so only
+    rows older than 15 minutes are removed: one still running on another replica is left alone."""
+    unfinished = (await control.execute(select(Tenant.id, Tenant.db_name).where(
+        Tenant.status == "provisioning", Tenant.created_at < func.now() - timedelta(minutes=15)))).all()
     for tenant_id, db_name in unfinished:
         await remove_tenant(control, tenant_id, db_name)
     return len(unfinished)
@@ -163,7 +167,7 @@ async def for_each_tenant(work: Callable[[AsyncSession], Awaitable[T]]) -> dict[
                 results[tenant.id] = await work(db)
                 await db.commit()
         except Exception:  # noqa: BLE001 - one company must not stop the rest
-            log.exception("work on company %s (%s) failed", tenant.name, tenant.db_name)
+            log.exception("work on company %s (%s) failed", tenant.id, tenant.db_name)
     return results
 
 
@@ -177,8 +181,16 @@ async def deprecate_everywhere(version_id: uuid.UUID, payload: dict) -> int:
     return sum((await for_each_tenant(lambda db: snapshot.deprecate_assessment_version(db, version_id, payload))).values())
 
 
+_run_counts: tuple[float, dict[uuid.UUID, int]] | None = None
+RUN_COUNTS_SECONDS = 120
+
+
 async def run_counts() -> dict[uuid.UUID, int]:
-    """Runs per assessment (all versions), across all companies."""
+    """Runs per assessment (all versions), across all companies. It reads every company database,
+    so the result is kept for two minutes."""
+    global _run_counts
+    if _run_counts and time.monotonic() - _run_counts[0] < RUN_COUNTS_SECONDS:
+        return _run_counts[1]
     async def count(db: AsyncSession) -> list[tuple[uuid.UUID, int]]:
         return [(aid, n) for aid, n in await db.execute(
             select(AssessmentVersion.assessment_id, func.count())
@@ -189,6 +201,7 @@ async def run_counts() -> dict[uuid.UUID, int]:
     for rows in (await for_each_tenant(count)).values():
         for assessment_id, n in rows:
             totals[assessment_id] = totals.get(assessment_id, 0) + n
+    _run_counts = (time.monotonic(), totals)
     return totals
 
 
@@ -233,8 +246,24 @@ async def _has_legacy_layout() -> bool:
             "AND table_name = 'app_user' AND column_name = 'tenant_id'"))).first())
 
 
+MIGRATION_LOCK = 4242_0001  # advisory lock on the control database: one migration run at a time
+
+
 async def migrate_all() -> list[str]:
-    """Upgrade the control database, then every company database. Returns the companies that failed."""
+    """Upgrade the control database, then every company database. Returns the companies that failed.
+
+    A company whose database can't be upgraded is marked `migration_failed` and taken offline; the
+    platform still starts for everyone else, and the next run tries that company again. Only one
+    run happens at a time, across replicas."""
+    async with control_engine.connect() as lock:
+        await lock.execute(text("SELECT pg_advisory_lock(:k)"), {"k": MIGRATION_LOCK})
+        try:
+            return await _migrate_all()
+        finally:
+            await lock.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": MIGRATION_LOCK})
+
+
+async def _migrate_all() -> list[str]:
     if await _has_legacy_layout():
         await asyncio.to_thread(upgrade_control, REGISTRY_REVISION)
         moved = await _split_legacy_tenants()
@@ -245,13 +274,17 @@ async def migrate_all() -> list[str]:
         removed = await remove_unfinished(control)
         if removed:
             log.info("removed %d half set up company(ies)", removed)
-        tenants = await active_tenants(control)
-    failed = []
-    for tenant in tenants:
-        try:
-            await asyncio.to_thread(upgrade_tenant_database, tenant.db_name)
-        except Exception:  # noqa: BLE001 - report every failure, don't stop at the first
-            log.exception("could not migrate %s (%s)", tenant.name, tenant.db_name)
-            failed.append(f"{tenant.name} ({tenant.db_name})")
-    log.info("migrated the control database and %d of %d company database(s)", len(tenants) - len(failed), len(tenants))
+        companies = (await control.execute(select(Tenant).where(Tenant.status.in_(("active", "migration_failed")))
+                                           .order_by(Tenant.created_at))).scalars().all()
+        failed = []
+        for tenant in companies:
+            try:
+                await asyncio.to_thread(upgrade_tenant_database, tenant.db_name)
+                tenant.status = "active"
+            except Exception:  # noqa: BLE001 - report every failure, don't stop at the first
+                log.exception("could not migrate company %s (%s); it is offline until this is fixed", tenant.id, tenant.db_name)
+                tenant.status = "migration_failed"
+                failed.append(f"{tenant.id} ({tenant.db_name})")
+            await control.commit()
+    log.info("migrated the control database and %d of %d company database(s)", len(companies) - len(failed), len(companies))
     return failed
