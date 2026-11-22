@@ -72,6 +72,24 @@ Updated 2026-11-22. Read this first after a compaction.
   - The 2 existing companies and their 4 users were moved to their own databases.
   - Verified: `ruff`, `tsc`, `eslint`, `alembic check` on both trees, fresh install on an empty database, an API test over two new companies (full run, isolation 404s, users, run counts, deprecation, master data sync, failed-signup clean-up), a Playwright signup and super admin login. Test companies and test library content were removed afterwards.
 
+## In progress: production readiness (user is away; work autonomously)
+The user's request (2026-11-22): create a local repo and commit everything to a branch; then review the app thoroughly from a technical standpoint and make it production ready, modular and scalable; if possible separate the AI service (frontend, backend, AI service). No remote.
+
+- **Git:** `main` = baseline (`b69293e`). All new work is on branch `production-readiness`, one commit per logical change, each leaving the app working. Commit messages end with the two attribution lines (Co-Authored-By: Claude Fable 5.2, Claude-Session link).
+- **Done:**
+  - AI service separation (commit `320dfdb`): `ai-service/` (FastAPI, stateless, owns prompts/schemas/tools/model calls/provider key), `packages/ai_contracts/` (shared Pydantic request/response models, copied into both images at `/app/ai_contracts` through a Docker extra build context), `backend/app/services/ai.py` is now an httpx client (`ai.call(path, body, Output, UsageTag)`, `ai.guide_system`, `ai.guide_step`). The guided chat: backend keeps state and runs tools; one model call per `POST /v1/guide/step` (SSE). Usage is returned by the AI service and recorded by the backend.
+  - `scripts/e2e_smoke.py`: stdlib end-to-end test through the API (real AI calls). Run it only against the throwaway stack.
+- **Verification stack:** `docker compose -p grcverify --env-file .env.verify -f docker-compose.yml up -d --build backend worker ai-service` (production settings, own volumes, backend on :18000; `.env.verify` is git-ignored and generated from `.env`). Run: `(set -a; . ./.env.verify; set +a; BASE_URL=http://localhost:18000 python3 scripts/e2e_smoke.py)`. Tear down with `down -v` when finished. Never run the smoke test against the dev stack: it now holds the client's 49 real controls.
+- **Three review agents** (backend security, backend architecture, frontend) were started read-only; their findings drive the hardening work.
+- **Plan for the rest** (in this order):
+  1. apply review findings by priority (security first), each as its own commit;
+  2. backend: request ids + logging, lifespan shutdown, config validation for production, login rate limiting, upload limits, tenant engine cache cap;
+  3. automated tests: `pytest` for backend (throwaway control database, fake AI client) and AI service (provider mocked), run in containers through `docker-compose.test.yml`;
+  4. production Compose settings (workers, proxy headers, healthchecks) and a CI workflow file;
+  5. docs: README architecture, `PROJECT_IDEA.md` decisions 44+, a production-readiness report (`PRODUCTION_READINESS.md`) listing what was done and what is left;
+  6. final run of lint, tests and the smoke test; update these notes.
+- **Decisions made on the user's behalf (they are away; record in the report):** AI service is a third deployable called over HTTP with a shared bearer token; prompts moved into it unchanged; backend keeps the AI budget; shared models live in `packages/ai_contracts`.
+
 ## Current state
 - **DB:** control database: 49 published controls (228 requirements), 0 assessments, 1 applied import; 25 domains, 22 org roles; six frameworks published (608 clauses); 2 tenants (`test`, `Northwind Labs`), each with its own database and no runs.
 - **AI usage:** `ai_usage.run_id` has no foreign key now, so deleting runs no longer deletes usage rows. The control database has 3 rows from the verification run (question generation).

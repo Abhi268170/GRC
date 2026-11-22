@@ -10,7 +10,12 @@ throwaway stack, not at one with real data:
     BASE_URL=http://localhost:18000 SUPER_ADMIN_EMAIL=... SUPER_ADMIN_PASSWORD=... python3 scripts/e2e_smoke.py
     docker compose -p grcverify --env-file .env.verify -f docker-compose.yml down -v
 """
-import json, os, sys, time, urllib.error, urllib.request, uuid
+import json
+import os
+import time
+import urllib.error
+import urllib.request
+import uuid
 
 BASE = os.environ.get("BASE_URL", "http://localhost:8000").rstrip("/")
 STAMP = uuid.uuid4().hex[:6]
