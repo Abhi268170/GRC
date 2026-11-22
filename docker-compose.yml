@@ -1,0 +1,106 @@
+name: grc
+
+x-backend-env: &backend-env
+  ENVIRONMENT: ${ENVIRONMENT:-development}
+  DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  REDIS_URL: redis://redis:6379/0
+  S3_ENDPOINT_URL: http://rustfs:9000
+  S3_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+  S3_SECRET_KEY: ${RUSTFS_SECRET_KEY}
+  S3_BUCKET: ${S3_BUCKET:-grc}
+  JWT_SECRET: ${JWT_SECRET}
+  SUPER_ADMIN_EMAIL: ${SUPER_ADMIN_EMAIL}
+  SUPER_ADMIN_PASSWORD: ${SUPER_ADMIN_PASSWORD}
+  ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+  RUN_AI_BUDGET_USD: ${RUN_AI_BUDGET_USD:-3}
+
+services:
+  postgres:
+    image: pgvector/pgvector:0.8.7-pg17-trixie
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  redis:
+    image: redis:8.6.8-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  rustfs:
+    image: rustfs/rustfs:1.0.6
+    environment:
+      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY}
+      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_KEY}
+      RUSTFS_CONSOLE_ENABLE: "true"
+    volumes:
+      - rustfs_data:/data
+    # The image ships without curl/wget, so readiness is checked by the
+    # migrate service (which retries until the bucket can be created).
+    restart: unless-stopped
+
+  migrate:
+    build: ./backend
+    command: ["python", "-m", "app.bootstrap"]
+    environment: *backend-env
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      rustfs: { condition: service_started }
+    restart: "no"
+
+  backend:
+    build: ./backend
+    environment: *backend-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live')"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  worker:
+    build: ./backend
+    command: ["arq", "app.worker.WorkerSettings"]
+    environment: *backend-env
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      target: runner
+      args:
+        BACKEND_URL: http://backend:8000
+    environment:
+      BACKEND_URL: http://backend:8000
+    depends_on:
+      backend: { condition: service_healthy }
+    ports:
+      - "${FRONTEND_PORT:-3000}:3000"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  rustfs_data:

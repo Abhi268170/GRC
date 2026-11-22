@@ -1,0 +1,20 @@
+.env
+node_modules/
+.next/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+
+# local environment files (only .env.example is tracked)
+.env.*
+!.env.example
+
+# tool output and caches
+graphify-out/
+.serena/logs/
+.claude/settings.local.json
+*.tsbuildinfo
+.coverage
+htmlcov/

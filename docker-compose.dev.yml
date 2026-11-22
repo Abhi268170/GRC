@@ -1,0 +1,39 @@
+# Development overrides: hot reload for frontend, backend and worker; RustFS console exposed.
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+services:
+  backend:
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--root-path", "/api", "--reload"]
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+
+  worker:
+    command: ["arq", "app.worker.WorkerSettings", "--watch", "app"]
+    volumes:
+      - ./backend/app:/app/app
+
+  migrate:
+    volumes:
+      - ./backend/app:/app/app
+      - ./backend/alembic:/app/alembic
+
+  frontend:
+    image: grc-frontend-dev  # separate tag so a production build never replaces the dev image
+    build:
+      context: ./frontend
+      target: dev
+    command: ["sh", "-c", "npm install --no-audit --no-fund && npm run dev -- --hostname 0.0.0.0"]
+    depends_on: !override
+      backend: { condition: service_started }
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
+
+  rustfs:
+    ports:
+      - "9001:9001"
+
+volumes:
+  frontend_node_modules:
+  frontend_next:
