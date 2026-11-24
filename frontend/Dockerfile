@@ -7,7 +7,7 @@ FROM base AS deps
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm npm ci
 
-# Development target: used by docker-compose.override.yml (source is bind-mounted)
+# Development target: used by docker-compose.dev.yml (source is bind-mounted)
 FROM deps AS dev
 COPY . .
 CMD ["npm", "run", "dev", "--", "--hostname", "0.0.0.0"]

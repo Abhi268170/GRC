@@ -4,6 +4,7 @@ AI-powered governance, risk and compliance platform: AI-guided compliance and se
 
 | Document | What it covers |
 |---|---|
+| [SETUP.md](SETUP.md) | Setting up and running it, step by step, and what to do when something goes wrong |
 | [PROJECT_IDEA.md](PROJECT_IDEA.md) | The product and the decisions log |
 | [SCHEMA.md](SCHEMA.md) | The data model |
 | [TENANT_DATABASE_PLAN.md](TENANT_DATABASE_PLAN.md) | One database per company |
@@ -27,6 +28,8 @@ browser ──> proxy (Caddy: TLS, compression, headers, size limit)
 - Only the proxy is published. In development there is no proxy: the frontend and backend are published directly.
 
 ## Run in development (hot reload)
+
+The short version. [SETUP.md](SETUP.md) has every step, the first sign-in and troubleshooting.
 
 ```bash
 cp .env.example .env        # then change the secrets
@@ -59,6 +62,9 @@ docker compose up -d --build
 | Setting | Default | Meaning |
 |---|---|---|
 | `SIGNUP_ENABLED` | `true` | Self-service sign-up. Each sign-up creates a database. |
+| `ZEFIX_USERNAME`, `ZEFIX_PASSWORD` | empty | Credentials for the Swiss commercial register (Zefix), used by the company search at sign-up. Without them visitors enter their company by hand. |
+| `WIKIDATA_ENABLED` | `true` | Look up a company's website and headcount in Wikidata at sign-up. |
+| `ACCESS_PASSWORD_HASH`, `ACCESS_USER` | empty, `trustup` | One shared password in front of the whole app, asked by the browser before anything is served (a bcrypt hash; see `deploy/Caddyfile`). For deployments only invited people may reach. |
 | `SIGNUP_MAX_PER_IP`, `SIGNUP_MAX_TOTAL` | 5, 60 | Sign-ups per hour, per address and in total. |
 | `RUN_AI_BUDGET_USD` | 3 | Estimated AI spend allowed per assessment run. |
 | `TENANT_AI_BUDGET_USD_MONTH` | 100 | Estimated AI spend allowed per company per month. |
@@ -74,8 +80,8 @@ docker compose up -d --build
 ```bash
 ruff check backend ai-service packages scripts                            # lint (Python)
 (cd frontend && npx tsc --noEmit && npx eslint src)                       # types and lint (frontend)
-docker compose -f docker-compose.test.yml run --rm --build backend-tests      # 39 tests, throwaway Postgres and Redis
-docker compose -f docker-compose.test.yml run --rm --build ai-service-tests   # 19 tests, no model calls
+docker compose -f docker-compose.test.yml run --rm --build backend-tests      # 66 tests, throwaway Postgres and Redis
+docker compose -f docker-compose.test.yml run --rm --build ai-service-tests   # 22 tests, no model calls
 docker compose -f docker-compose.test.yml down -v
 ```
 

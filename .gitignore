@@ -11,6 +11,15 @@ __pycache__/
 .env.*
 !.env.example
 
+# credentials and keys: never commit
+.aws/
+*.pem
+*.key
+*accessKeys*.csv
+
+# local working notes (machine paths, addresses of running stacks)
+.claude/session-notes.md
+
 # tool output and caches
 graphify-out/
 .serena/logs/

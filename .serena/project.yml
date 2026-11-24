@@ -166,7 +166,7 @@ added_modes:
 
 # initial prompt for the project. It will always be given to the LLM upon activating the project
 # (contrary to the memories, which are loaded on demand).
-initial_prompt: "TrustUp AI GRC POC. Runs in Docker Compose: Next.js 16 frontend (localhost:3100, proxies /api), FastAPI backend (:8000, routes at /), arq worker, postgres, redis, rustfs. Read .claude/session-notes.md for constraints. No git: never git init or commit. Never print secrets from .env."
+initial_prompt: "TrustUp AI GRC POC. Runs in Docker Compose: Next.js 16 frontend (localhost:3100, proxies /api), FastAPI backend (:8000, routes at /), arq worker, postgres, redis, rustfs. Read .claude/session-notes.md for constraints. Git: the remote is github.com/Abhi268170/GRC (private); commit and push only when the user asks, and never commit .env, .aws or other credentials. Never print secrets from .env."
 
 # time budget (seconds) per tool call for the retrieval of additional symbol information
 # such as docstrings or parameter information.
