@@ -15,9 +15,10 @@ import type { Evaluation, EvidenceFile, RequirementState } from "@/lib/types";
 
 export type RequirementInput = { answer: string | null; rating: number | null; is_na: boolean; na_reason: string | null; evidence_ids: string[] };
 
-const isConfirmed = (e: Evaluation | null) => !!e && (e.status === "verified" || e.status === "overridden");
+/** A person has set or accepted the rating. */
+export const isConfirmed = (e: Evaluation | null) => !!e && (e.status === "verified" || e.status === "overridden");
 
-function statusText(e: Evaluation | null): { label: string; tone: string; icon: React.ReactNode } {
+export function statusText(e: Evaluation | null): { label: string; tone: string; icon: React.ReactNode } {
   if (!e) return { label: "Not rated yet", tone: "text-muted-foreground", icon: null };
   if (e.status === "awaiting_ai") return { label: "AI is rating this…", tone: "text-accent-foreground", icon: <Loader2 className="size-3 animate-spin" /> };
   if (e.status === "ai_suggested") return { label: "AI suggestion", tone: "text-accent-foreground", icon: null };
@@ -127,7 +128,7 @@ export function RequirementsRail({ requirements, expanded, onToggle, onOpen, ana
 function RatingPicker({ value, onChange, allowAi }: { value: number | "na" | null; onChange: (v: number | "na" | null) => void; allowAi: boolean }) {
   const opt = (v: number | "na", label: string, title: string) => (
     <button key={String(v)} type="button" title={title} onClick={() => onChange(value === v ? null : v)}
-      className={`h-10 rounded-[10px] text-sm font-medium transition ${value === v ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/70"}`}>{label}</button>
+      className={`h-10 rounded-lg text-sm font-medium transition ${value === v ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/70"}`}>{label}</button>
   );
   return (
     <div className="space-y-2">
@@ -207,7 +208,7 @@ function SheetBody({ r, runId, evidence, editable, aiPaused, busy, onSave, onCon
         {r.clauses.length > 0 && (
           <div className="flex flex-wrap gap-1.5">
             {r.clauses.map((c) => (
-              <span key={c.framework_code + c.ref} title={c.title} className="inline-flex items-center gap-1 rounded-full bg-muted py-0.5 pl-1 pr-2.5 text-xs">
+              <span key={c.framework_code + c.ref} title={c.title} className="inline-flex items-center gap-1 rounded-md bg-muted py-0.5 pl-1 pr-2.5 text-xs">
                 <FrameworkBadge code={c.framework_code} /><span className="font-mono">{c.ref}</span>
               </span>
             ))}
@@ -229,7 +230,7 @@ function SheetBody({ r, runId, evidence, editable, aiPaused, busy, onSave, onCon
             <div className="mt-3 flex flex-wrap gap-1.5">
               {[...cited].map((id) => (
                 <a key={id} href={`/api/runs/${runId}/evidence/${id}/file`} target="_blank" rel="noreferrer"
-                  className="inline-flex items-center gap-1.5 rounded-full bg-card px-3 py-1 text-xs hover:opacity-70">
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-card px-3 py-1 text-xs hover:opacity-70">
                   <FileText className="size-3.5" />{byId.get(id)?.filename ?? "Evidence"}
                 </a>
               ))}
@@ -259,10 +260,10 @@ function SheetBody({ r, runId, evidence, editable, aiPaused, busy, onSave, onCon
               {added.map((id) => {
                 const f = byId.get(id);
                 return (
-                  <span key={id} className="inline-flex items-center gap-1.5 rounded-full bg-muted py-1.5 pl-3 pr-1.5 text-xs">
+                  <span key={id} className="inline-flex items-center gap-1.5 rounded-lg bg-muted py-1.5 pl-3 pr-1.5 text-xs">
                     {f?.processing_status === "ready" ? <FileText className="size-3.5" /> : f?.processing_status === "failed" ? <X className="size-3.5 text-destructive" /> : <Loader2 className="size-3.5 animate-spin" />}
                     <span className="max-w-48 truncate">{f?.filename ?? "Uploading…"}</span>
-                    <button onClick={() => setAdded((a) => a.filter((x) => x !== id))} className="rounded-full p-0.5 hover:bg-card" aria-label="Remove"><X className="size-3" /></button>
+                    <button onClick={() => setAdded((a) => a.filter((x) => x !== id))} className="rounded-sm p-0.5 hover:bg-card" aria-label="Remove"><X className="size-3" /></button>
                   </span>
                 );
               })}

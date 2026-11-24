@@ -1,21 +1,20 @@
 "use client";
 
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckCircle2, ChevronLeft, Circle, CircleDot, ListChecks, MessagesSquare, RotateCcw, Scale } from "lucide-react";
+import { CheckCircle2, ChevronLeft, Circle, CircleDot, ClipboardCheck, ListChecks, MessagesSquare, Scale } from "lucide-react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
 import { Bar, DomainStatusBadge } from "@/components/runs/badges";
 import { Chat, type LiveTurn } from "@/components/runs/chat";
-import { type RequirementInput, RequirementSheet, RequirementsRail } from "@/components/runs/requirements";
+import { CompleteOrReopen, useDomainWorkspace } from "@/components/runs/domain-actions";
+import { RequirementSheet, RequirementsRail } from "@/components/runs/requirements";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api, errorMessage, streamPost } from "@/lib/api";
 import { useAction } from "@/lib/hooks";
-import type { Evaluation, EvidenceFile, QuestionState, RequirementState, Workspace } from "@/lib/types";
+import type { QuestionState, Workspace } from "@/lib/types";
 
 function QuestionList({ questions, current }: { questions: QuestionState[]; current: string | null }) {
   const base = questions.filter((q) => q.kind === "base");
@@ -48,15 +47,6 @@ type Tab = "chat" | "ratings" | "questions";
 
 export default function DomainWorkspace() {
   const { id, domainId } = useParams<{ id: string; domainId: string }>();
-  const router = useRouter();
-  const qc = useQueryClient();
-  const key = ["workspace", id, domainId];
-  const ws = useQuery({
-    queryKey: key,
-    queryFn: () => api<Workspace>(`/runs/${id}/domains/${domainId}`),
-    // Poll while evidence is being read or background analysis is updating other requirements.
-    refetchInterval: (q) => (q.state.data && (q.state.data.analysis_pending || q.state.data.evidence.some((e) => ["pending", "processing"].includes(e.processing_status))) ? 2500 : false),
-  });
   const [live, setLive] = useState<LiveTurn | null>(null);
   const [tab, setTab] = useState<Tab>("chat");
   const [confirming, setConfirming] = useState(false);
@@ -70,19 +60,9 @@ export default function DomainWorkspace() {
     try { localStorage.setItem("trustup.rail", o ? "closed" : "open"); } catch { /* storage unavailable */ }
     return !o;
   });
-  const set = (w: Workspace) => qc.setQueryData(key, w);
-
-  const saveRequirement = useAction(({ r, v }: { r: RequirementState; v: RequirementInput }) => api<Workspace>(`/runs/${id}/requirements/${r.id}`, { method: "PUT", body: v }), {
-    onSuccess: (w) => { set(w); setOpenReq(null); toast.success("Saved. Checking other requirements in the background."); },
-  });
-  const verify = useAction((e: Evaluation) => api<Workspace>(`/runs/${id}/evaluations/${e.id}`, { method: "PUT", body: { rating: e.rating, is_na: e.is_na, na_reason: e.na_reason } }), {
-    onSuccess: (w) => { set(w); setOpenReq(null); },
-  });
+  const domain = useDomainWorkspace(id, domainId, () => setOpenReq(null));
+  const { ws, set, saveRequirement, verify, upload } = domain;
   const markNa = useAction(({ q, reason }: { q: string; reason: string }) => api<Workspace>(`/runs/${id}/questions/${q}/na`, { body: { reason } }), { onSuccess: set });
-  const complete = useAction(() => api(`/runs/${id}/domains/${domainId}/complete`, { method: "POST" }), {
-    invalidate: [["run", id], ["runs"]], success: "Domain completed", onSuccess: () => router.push(`/app/runs/${id}`),
-  });
-  const reopen = useAction(() => api(`/runs/${id}/domains/${domainId}/reopen`, { method: "POST" }), { invalidate: [key, ["run", id]] });
 
   // Leaving or reloading while the guide is answering cancels the turn and loses the message.
   useEffect(() => {
@@ -96,8 +76,6 @@ export default function DomainWorkspace() {
     return <div className="grid h-[calc(100vh-4.6rem)] gap-3 p-3 lg:grid-cols-[1fr_23rem]"><Skeleton className="h-full rounded-3xl" /><Skeleton className="h-full rounded-3xl" /></div>;
   }
   const w = ws.data;
-  const allConfirmed = w.requirements.every((r) => r.evaluation && ["verified", "overridden"].includes(r.evaluation.status));
-  const canComplete = w.editable && allConfirmed;
 
   async function send(text: string, evidence: string[]): Promise<boolean> {
     setLive({ userText: text, reply: "", status: null });
@@ -118,18 +96,6 @@ export default function DomainWorkspace() {
   }
 
 
-  async function upload(file: File): Promise<EvidenceFile | undefined> {
-    const form = new FormData();
-    form.append("file", file);
-    try {
-      const ev = await api<EvidenceFile>(`/runs/${id}/evidence`, { form });
-      await ws.refetch();
-      return ev;
-    } catch (e) {
-      toast.error(errorMessage(e));
-    }
-  }
-
   async function confirmAll() {
     setConfirming(true);
     try {
@@ -144,18 +110,6 @@ export default function DomainWorkspace() {
     }
   }
 
-  const headerAction = w.domain.status === "completed" ? (
-    w.domain.can_work && ["in_progress", "changes_requested"].includes(w.run_status)
-      ? <Button variant="outline" size="sm" onClick={() => reopen.mutate(undefined)}><RotateCcw /> Reopen</Button> : null
-  ) : w.editable ? (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <span><Button size="sm" disabled={!canComplete || complete.isPending} onClick={() => complete.mutate(undefined)}><CheckCircle2 /> Complete domain</Button></span>
-      </TooltipTrigger>
-      {!canComplete && <TooltipContent>Every requirement needs a confirmed rating</TooltipContent>}
-    </Tooltip>
-  ) : null;
-
   const opened = w.requirements.find((r) => r.id === openReq) ?? null;
   const rail = (expanded: boolean) => (
     <RequirementsRail requirements={w.requirements} expanded={expanded} onToggle={toggleRail} onOpen={(r) => setOpenReq(r.id)}
@@ -167,17 +121,20 @@ export default function DomainWorkspace() {
   return (
     <div className="flex h-[calc(100vh-4.6rem)] flex-col gap-3 p-3">
       <div className="flex items-center gap-4 rounded-3xl bg-card px-4 py-3 sm:px-5">
-        <Link href={`/app/runs/${id}`} className="flex size-9 items-center justify-center rounded-full bg-muted text-muted-foreground hover:text-foreground" aria-label="Back to assessment"><ChevronLeft className="size-4" /></Link>
+        <Link href={`/app/runs/${id}`} className="flex size-9 items-center justify-center rounded-lg bg-muted text-muted-foreground hover:text-foreground" aria-label="Back to assessment"><ChevronLeft className="size-4" /></Link>
         <div className="min-w-0 flex-1">
           <p className="truncate text-lg font-medium tracking-tight">{w.domain.name}</p>
-          <div className="flex items-center gap-2"><Bar value={rated} max={total} className="w-24 shrink-0" /><span className="whitespace-nowrap text-xs text-muted-foreground">{rated}/{total} requirements rated</span></div>
+          <div className="flex items-center gap-2"><Bar value={rated} max={total} className="hidden w-24 shrink-0 sm:flex" /><span className="whitespace-nowrap text-xs text-muted-foreground">{rated}/{total} requirements rated</span></div>
         </div>
-        <DomainStatusBadge status={w.domain.status} />
-        {headerAction}
+        <span className="hidden sm:inline-flex"><DomainStatusBadge status={w.domain.status} /></span>
+        {/* Not while the guide is answering: leaving the page would cut the reply off. */}
+        {live ? <Button variant="outline" size="sm" disabled aria-label="Review"><ClipboardCheck /><span className="hidden sm:inline">Review</span></Button>
+          : <Button variant="outline" size="sm" asChild><Link href={`/app/runs/${id}/domains/${domainId}/review`} aria-label="Review"><ClipboardCheck /><span className="hidden sm:inline">Review</span></Link></Button>}
+        <CompleteOrReopen w={w} domain={domain} />
       </div>
-      <div className="flex rounded-full bg-card p-1 lg:hidden">
+      <div className="flex rounded-xl bg-card p-1 lg:hidden">
         {([["chat", "Conversation", MessagesSquare], ["ratings", "Requirements", Scale], ["questions", "Outline", ListChecks]] as const).map(([t, label, Icon]) => (
-          <button key={t} onClick={() => setTab(t)} className={`flex flex-1 items-center justify-center gap-1.5 rounded-full py-2 text-xs font-medium ${tab === t ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
+          <button key={t} onClick={() => setTab(t)} className={`flex flex-1 items-center justify-center gap-1.5 rounded-lg py-2 text-xs font-medium ${tab === t ? "bg-primary text-primary-foreground" : "text-muted-foreground"}`}>
             <Icon className="size-3.5" />{label}
           </button>
         ))}
