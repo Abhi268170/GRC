@@ -183,6 +183,8 @@ services:
     image: caddy:2.10.2-alpine
     environment:
       SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+      ACCESS_USER: ${ACCESS_USER:-trustup}
+      ACCESS_PASSWORD_HASH: ${ACCESS_PASSWORD_HASH:-}
     volumes:
       - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

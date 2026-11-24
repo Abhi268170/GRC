@@ -20,6 +20,10 @@ const nextConfig: NextConfig = {
     },
   },
   poweredByHeader: false,
+  // Development only: lets the dev server's own scripts load when the stack is shared through
+  // Tailscale Funnel (docker-compose.share.yml), where the page's address is a *.ts.net name.
+  // "*" stands for one part of the name and such an address has two, hence "*.*".
+  allowedDevOrigins: ["*.*.ts.net"],
   // Development and deployments without the reverse proxy. In production the proxy
   // (deploy/Caddyfile) sends /api straight to the backend and sets the same headers itself.
   async rewrites() {

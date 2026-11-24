@@ -1,0 +1,35 @@
+# Share the running stack with people outside your network through Tailscale Funnel: a public
+# https://<TS_HOSTNAME>.<your-tailnet>.ts.net address that ends at the reverse proxy, which asks
+# for the shared password (ACCESS_PASSWORD_HASH) before anything else is answered.
+#
+# Start (development stack already running):
+#   docker compose --env-file .env --env-file <share.env> \
+#     -f docker-compose.yml -f docker-compose.dev.yml -f docker-compose.share.yml \
+#     --profile proxy --profile share up -d --no-deps proxy tailscale
+#   docker compose ... exec tailscale tailscale up --hostname=trustup   # first time only: prints a
+#                                                                       # sign-in link and waits
+#   docker compose ... exec tailscale tailscale funnel --bg http://proxy:80
+# The sign-in and the funnel setting are kept in the tailscale_state volume, so later starts need
+# neither command.
+# Stop sharing:
+#   docker compose ... --profile proxy --profile share rm -sf tailscale proxy
+#
+# share.env holds ACCESS_PASSWORD_HASH (required here: never share without it) and keeps the
+# proxy off the host's public ports: HTTP_PORT=127.0.0.1:8480 and HTTPS_PORT=127.0.0.1:8443.
+services:
+  tailscale:
+    image: tailscale/tailscale:stable
+    hostname: ${TS_HOSTNAME:-trustup}
+    # tailscaled is started directly: the image's own start script gives up on an interactive
+    # sign-in after a minute and restarts with a new key, which makes the sign-in link useless.
+    entrypoint: ["tailscaled", "--tun=userspace-networking", "--statedir=/var/lib/tailscale",
+                 "--socket=/var/run/tailscale/tailscaled.sock"]
+    volumes:
+      - tailscale_state:/var/lib/tailscale
+    depends_on:
+      proxy: { condition: service_started }
+    profiles: ["share"]
+    restart: unless-stopped
+
+volumes:
+  tailscale_state:

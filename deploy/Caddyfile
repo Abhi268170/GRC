@@ -3,7 +3,22 @@
 # SITE_ADDRESS decides how it listens:
 #   :80                 plain HTTP on any host name (local use, or behind another TLS terminator)
 #   app.example.com     that host, with HTTPS certificates obtained and renewed automatically
+#
+# ACCESS_PASSWORD_HASH (optional) puts one shared password in front of everything, for a
+# deployment that only invited people may reach: the browser asks for it before any page or API
+# call is answered. It is a bcrypt hash, made with
+#   docker run --rm caddy:2.10.2-alpine caddy hash-password --bcrypt-cost 10 --plaintext '<the password>'
+# The user name is ACCESS_USER (default "trustup"). Use a long random password: there is no
+# lock-out, so its length is what stops guessing. (Cost 10 keeps a flood of wrong guesses from
+# using up the processor; with a long random password a higher cost adds nothing.)
 {$SITE_ADDRESS::80} {
+	# The second value is only a stand-in so the file is valid when no password is set; the
+	# matcher is then false and nobody is asked.
+	@locked expression `"{$ACCESS_PASSWORD_HASH}" != ""`
+	basic_auth @locked {
+		{$ACCESS_USER:trustup} {$ACCESS_PASSWORD_HASH:$2a$10$0000000000000000000000000000000000000000000000000000u}
+	}
+
 	# No request body may be larger than the API accepts (the largest upload is 30 MB).
 	request_body {
 		max_size 32MB
