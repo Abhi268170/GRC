@@ -74,7 +74,7 @@ function Issues({ issues, importId }: { issues: ImportIssue[]; importId: string 
             const n = issues.filter((i) => i.level === level).length;
             return (
               <button key={level} type="button" onClick={() => setTab(level)} disabled={!n}
-                className={`rounded-full px-3 py-1.5 text-sm transition disabled:opacity-40 ${tab === level ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}>
+                className={`rounded-lg px-3 py-1.5 text-sm transition disabled:opacity-40 ${tab === level ? "bg-muted font-medium" : "text-muted-foreground hover:text-foreground"}`}>
                 {level === "error" ? "Errors" : "Warnings"} <span className="ml-1 text-xs text-muted-foreground">{n}</span>
               </button>
             );

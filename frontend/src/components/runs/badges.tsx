@@ -70,6 +70,6 @@ export function Bar({ value, max, className = "" }: { value: number; max: number
 export function MandatoryBadge({ value }: { value: boolean | null }) {
   if (value === null) return null;
   return value
-    ? <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground">Mandatory</span>
-    : <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">Optional</span>;
+    ? <span className="rounded-md bg-primary px-2 py-0.5 text-[11px] font-medium text-primary-foreground">Mandatory</span>
+    : <span className="rounded-md bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">Optional</span>;
 }

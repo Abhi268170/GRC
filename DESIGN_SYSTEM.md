@@ -9,7 +9,7 @@ The visual language of the TrustUp frontend. It is derived from the reference de
 ## 1. Principles
 
 1. **Calm canvas, clear cards.** A soft grey page with white, borderless, very rounded cards. Separation comes from colour, not lines or shadows.
-2. **Black acts, lime highlights.** Black is the colour of action (primary buttons, the selected nav pill, the send button). Lime is used sparingly to draw the eye: AI insights, the current question, progress tips, unread dots.
+2. **Black acts, lime highlights.** Black is the colour of action (primary buttons, the selected nav link, the send button). Lime is used sparingly to draw the eye: AI insights, the current question, progress tips, unread dots.
 3. **Big, light numbers.** Key figures are large and light (weight 300) with small, quiet units and labels.
 4. **Minimal friction.** One clear primary action per area. Secondary options stay out of sight until they are relevant (e.g. manual rating only appears when needed).
 5. **AI is visible but never decides alone.** AI output is marked (lime sparkle, "AI suggestion") and always has a human confirmation step.
@@ -21,19 +21,30 @@ The visual language of the TrustUp frontend. It is derived from the reference de
 
 **Name:** TrustUp (written "TrustUp" in text; the wordmark is lower case "trustup").
 
-**Mark:** two chain links joined on an upward diagonal, drawn as rounded outlines (64×64 grid, links 32×18 with radius 9, stroke 5.5, rotated −45°). **Wordmark:** Space Grotesk Bold, letter-spacing −0.04em, converted to outlines so it renders identically everywhere. Lock-up: mark height = 1.2× text size, gap = 0.2× text size.
+**Logo:** supplied by the client (source: `frontend/scripts/brand/trustup-logo-source.svg`). **Mark:** a "tu" monogram, a bar over a "U" with a tick at the top right, in three greens. **Wordmark:** "trustup" in lower case, already converted to outlines.
 
-| Variant | Colours (app palette) | Use |
+| Logo colour | Hex | Where |
 |---|---|---|
-| Light (`trustup-logo-light.svg`) | Links ink `#0F0F0F` + lime `#6BEF75`; "trust" ink; "up" brand-strong `#1B7E2A` | White / light backgrounds |
-| Dark (`trustup-logo-dark.svg`) | Links off-white `#F2F2F2` + lime; "trust" off-white; "up" lime | Ink / dark backgrounds |
-| Lime (`trustup-logo-lime.svg`) | Links ink + off-white; wordmark all ink | Lime backgrounds |
-| Mark only (`trustup-mark-{light,dark,lime}.svg`) | As above | Tight spaces, avatars |
-| App icon (`trustup-app-icon.svg`, `-small.svg`) | Ink rounded square (radius 23/100), off-white + lime links; small version uses stroke 7 | App icon, favicon (`src/app/icon.svg`) |
+| Lime green | `#8CD052` | Left of the bar, left arm of the "U" |
+| Mid green | `#58A562` | Right of the bar, the tick |
+| Dark green | `#288253` | Right arm of the "U"; the wordmark on light backgrounds |
+| Pale green | `#A9D4A2` | The wordmark on dark backgrounds (as in the source) |
 
-- In the app use the `Logo` / `LogoMark` components (`components/app/logo.tsx`); `tone="auto"` follows the theme tokens (light/dark automatically), `tone="lime"` is for lime surfaces. Size by height (`h-7` top bar, `h-9` auth pages).
-- Static files: `frontend/public/brand/`. Regenerate with `frontend/scripts/build_brand.py` (keeps SVGs, component paths and palette in sync).
-- Don't recolour the links individually, stretch the logo, or place the light version on dark backgrounds. Keep clear space of at least the mark's width/4 around it.
+The logo's greens are not the app's `brand` tokens (§3): the app accent is still lime `#6BEF75`.
+
+| Variant (in `frontend/public/brand/`) | Use |
+|---|---|
+| `trustup-logo-light.svg`, `trustup-logo-dark.svg` | Mark left, wordmark right. Headers and anywhere wide. "light" is for light backgrounds, "dark" for dark ones. |
+| `trustup-logo-stacked-light.svg`, `trustup-logo-stacked-dark.svg` | Mark above the wordmark, in the source's proportions. Covers, centred layouts. |
+| `trustup-mark.svg` | The mark alone. Tight spaces, avatars. Works on light and dark. |
+| `trustup-app-icon.svg` | The mark on a white rounded square (radius 23/100). App icon. |
+| `src/app/icon.svg`, `src/app/apple-icon.png` | Favicon and Apple touch icon (the app icon, the mark slightly larger in the favicon). |
+
+- In the app use the `Logo` component (`components/app/logo.tsx`). The mark's colours never change; the wordmark follows the theme (dark green on light, pale green on dark). Size by height (`h-7` top bar, `h-9` auth pages).
+- The source's pale green wordmark is too faint on white (contrast about 1.7:1), so light backgrounds use the mark's dark green.
+- The app icon's tile is white: on a dark tile the dark green arm almost disappears at favicon size.
+- Regenerate every file with `python3 scripts/build_brand.py` (from `frontend/`), which reads the source SVG. It keeps the SVG files and the component's paths in sync.
+- Don't recolour the mark, stretch the logo, or place the light version on dark backgrounds. Keep clear space of at least a quarter of the mark's width around it.
 
 ## 3. Colour
 
@@ -46,7 +57,7 @@ Colours are defined as OKLCH CSS variables and exposed to Tailwind as `bg-*`, `t
 | `background` | `#F0F0EF` | `#090909` | Page canvas |
 | `card` / `popover` | `#FFFFFF` | `#151515` | Cards, panels, menus, dialogs |
 | `foreground` | `#0F0F0F` | `#F2F2F2` | Body text |
-| `primary` | `#0F0F0F` (black) | `#F2F2F2` (white) | Primary buttons, selected pills, user chat bubbles |
+| `primary` | `#0F0F0F` (black) | `#F2F2F2` (white) | Primary buttons, selected tabs and nav links, user chat bubbles |
 | `primary-foreground` | white | near-black | Text on `primary` |
 | `brand` | `#6BEF75` (lime) | `#6BEF75` | Highlights, AI accents, logo, progress tips, unread dots |
 | `brand-foreground` | near-black | near-black | Text on `brand` (always dark) |
@@ -136,21 +147,20 @@ Font features: `"ss01"` and `"tnum"` (tabular numbers) are on globally.
 
 ## 6. Shape
 
-> **Gotcha:** the theme radius is `--radius: 1rem`, and Tailwind's named radii scale from it: `rounded-sm` ≈ 10px, `rounded-md` ≈ 13px, `rounded-lg` = 16px, `rounded-xl` ≈ 22px, `rounded-2xl` ≈ 29px, `rounded-3xl` ≈ 35px. Named radii on small controls therefore look like pills. **Use explicit pixel radii for small rectangular controls.**
+Rounded rectangles, not pills. Only things that are circles by nature stay fully round: avatars, status dots, progress bars and the switch.
+
+The theme radius is `--radius: 0.5rem` (8px), and Tailwind's named radii scale from it: `rounded-sm` ≈ 5px, `rounded-md` ≈ 6px, `rounded-lg` = 8px, `rounded-xl` ≈ 11px, `rounded-2xl` ≈ 14px, `rounded-3xl` ≈ 18px. To make everything rounder or squarer, change `--radius` in `globals.css`.
 
 | Element | Radius |
 |---|---|
-| Cards, panels, dialogs, empty states | `rounded-3xl` (~35px) |
-| Auth panels | `rounded-[2rem]` |
-| Nested surfaces inside cards (rating cards, chat bubbles, outline items) | `rounded-2xl` / `rounded-3xl` |
-| **Buttons, tabs, nav pills, badges** | `rounded-full` (pill) |
-| **Text inputs** | **`rounded-[10px]`**, like select fields: form fields are rounded rectangles, never pills |
-| **Text areas** | **`rounded-[12px]`** |
-| Textareas | `rounded-2xl` (composer: `rounded-3xl`) |
-| **Dropdowns (select fields)** | **`rounded-[10px]`** — rounded rectangle, never a pill |
-| **Dropdown lists and menus** (select content, `⋯` menus, command pickers) | **`rounded-[12px]`** |
-| **Options / menu items** | **`rounded-[6px]`** |
-| Picker search box | `rounded-[8px]` |
+| Cards, panels, dialogs, empty states, auth panels | `rounded-3xl` (~18px) |
+| Nested surfaces inside cards (rating cards, chat bubbles, outline items) | `rounded-2xl` (~14px) |
+| Tab tracks, segmented controls, notice bars, the user menu button | `rounded-xl` (~11px) |
+| **Buttons (including icon buttons), tabs, navigation links, text inputs, select fields, choice chips, file chips** | `rounded-lg` (8px) |
+| Badges, small tags, number tiles | `rounded-md` (~6px) |
+| Text areas, dropdown lists and menus (select content, `⋯` menus, command pickers) | `rounded-[10px]` |
+| Options / menu items, picker search box | `rounded-[6px]` |
+| Avatars, dots, progress bars, the switch | `rounded-full` |
 
 ---
 
@@ -189,7 +199,7 @@ All paths are relative to `frontend/src/components/`.
 
 ### 8.1 Buttons — `ui/button.tsx`
 
-Pill-shaped (`rounded-full`).
+Rounded rectangles (`rounded-lg`, 8px), icon buttons included.
 
 | Variant | Look | Use |
 |---|---|---|
@@ -215,20 +225,20 @@ Icons: `lucide-react`, 16px by default. Icon-only buttons **must** have `aria-la
 
 | Component | Style |
 |---|---|
-| `ui/input.tsx` | `h-10 rounded-[10px]`, grey fill (`bg-muted`), no border; on focus: white fill + lime ring |
-| `ui/textarea.tsx` | `rounded-[12px]`, grey fill, same focus treatment |
-| `ui/select.tsx` | Field `h-10 rounded-[10px]` grey fill; list `rounded-[12px]`; options `rounded-[6px]`, highlighted in pale lime |
+| `ui/input.tsx` | `h-10 rounded-lg`, grey fill (`bg-muted`), no border; on focus: white fill + lime ring |
+| `ui/textarea.tsx` | `rounded-[10px]`, grey fill, same focus treatment |
+| `ui/select.tsx` | Field `h-10 rounded-lg` grey fill; list `rounded-[10px]`; options `rounded-[6px]`, highlighted in pale lime |
 | `app/password-input.tsx` | `Input` + eye toggle (`Show password` / `Hide password`, `aria-pressed`). Use for **every** password field |
 | `app/field.tsx` | Label + control + optional hint (`text-xs text-muted-foreground`) |
 
 ### 8.3 Tabs and navigation
 
-- **Tabs** (`ui/tabs.tsx`): white pill track; the selected tab is a **black pill with white text**. Hover darkens only unselected tabs (`not-data-active:hover:…`) so selected text never becomes unreadable.
-- **Top navigation** (`app/shell.tsx`): logo, horizontal pill links (selected = black pill), tenant name chip, round notification button with lime unread dot, avatar + name + role. Below `lg` the links move into a slide-out `Sheet`.
+- **Tabs** (`ui/tabs.tsx`): white track; the selected tab is **black with white text**. Hover darkens only unselected tabs (`not-data-active:hover:…`) so selected text never becomes unreadable.
+- **Top navigation** (`app/shell.tsx`): logo, horizontal links (selected = black), tenant name chip, notification button with lime unread dot, avatar + name + role. Below `lg` the links move into a slide-out `Sheet`.
 
 ### 8.4 Badges — `ui/badge.tsx`, `app/status.tsx`, `runs/badges.tsx`
 
-Small pills (`h-5`, `text-xs`). Status badges use tinted backgrounds of the status colour.
+Small tags (`h-5`, `text-xs`). Status badges use tinted backgrounds of the status colour.
 
 | Badge | States |
 |---|---|
@@ -242,7 +252,7 @@ Small pills (`h-5`, `text-xs`). Status badges use tinted backgrounds of the stat
 
 | Component | Purpose |
 |---|---|
-| `PageHeader` | Optional back pill, eyebrow, oversized title, description, meta row, actions |
+| `PageHeader` | Optional back link, eyebrow, oversized title, description, meta row, actions |
 | `Panel` / `PanelTitle` | White `rounded-3xl` card; title row = icon + grey label + optional action |
 | `Stat` | Panel with label, `BigNumber`, hint and optional visual; becomes a link card with `href` |
 | `BigNumber` | `.display` number with a small top-aligned unit (`/4`, `%`) |
@@ -265,7 +275,7 @@ Small pills (`h-5`, `text-xs`). Status badges use tinted backgrounds of the stat
 - **Bubbles:** user = black, right-aligned, `rounded-3xl rounded-br-lg`, initials avatar; AI = grey (`bg-muted`), left-aligned, `rounded-bl-lg`, lime round avatar with a sparkle.
 - **Streaming:** the AI bubble grows as text arrives with a lime blinking cursor; while working, three bouncing dots + a status line ("Suggesting ratings…").
 - **Events:** small centred grey lines ("Answer saved", "We've moved on…"); domain finished = black card with a lime icon.
-- **Composer:** round outline attach button + pill textarea + black round send button; file chips are grey pills with a spinner while evidence is read.
+- **Composer:** outline attach button + textarea + black send button; file chips are grey with a spinner while evidence is read.
 - **Requirements rail** (`runs/requirements.tsx`): collapsed by default to a 64px rail (confirmed count + one dot per requirement: hollow = not rated, pulsing lime = AI rating it, lime = AI suggestion, black = confirmed); expands to 22rem compact cards. The choice is remembered per browser.
 - **Requirement detail sheet:** right-side sheet with the statement, "what good evidence looks like", framework clause chips, the current rating with rationale and cited evidence, then **Your answer**, **Rating** (0–4 / N/A as 10px rounded segments; none selected = let the AI rate) and **Evidence** (upload or choose uploaded). Sticky primary action: "Save rating" or "Ask AI to rate"; "Confirm AI rating" appears on unchanged AI suggestions.
 - **RichText:** renders the AI's paragraphs, `-` and `1.` lists, `**bold**` and `*italic*`. Never render raw Markdown.
@@ -274,7 +284,7 @@ Small pills (`h-5`, `text-xs`). Status badges use tinted backgrounds of the stat
 
 - Dialogs: `rounded-3xl`, `p-6`. Footer actions right-aligned: outline "Cancel" then the primary action.
 - Destructive or irreversible actions (discard draft, delete) always go through `AlertDialog` with a plain explanation of the consequence.
-- Menus: `rounded-[12px]` with `rounded-[6px]` items; destructive items use the `destructive` item variant.
+- Menus: `rounded-[10px]` with `rounded-[6px]` items; destructive items use the `destructive` item variant.
 - Toasts: `sonner`, top-right, rich colours; success for completed actions, error for failures.
 
 ---
@@ -285,7 +295,7 @@ Small pills (`h-5`, `text-xs`). Status badges use tinted backgrounds of the stat
 |---|---|
 | **Overview page** | Eyebrow + "Overview" title on the left, lime insight card on the right (one sentence pointing to the next best action), then a 4-up `Stat` row, then lists |
 | **List of records** | Stack of standalone white row cards (`rounded-3xl`, `space-y-2`), each a link with a trailing `↗` and a lime ring on hover; or rows inside one card separated by hairline borders for dense admin lists |
-| **Detail page** | `PageHeader` with back pill + meta badges, content left, sticky side panel right (`lg:grid-cols-[1fr_19rem]`) |
+| **Detail page** | `PageHeader` with back link + meta badges, content left, sticky side panel right (`lg:grid-cols-[1fr_19rem]`) |
 | **Stacked-card modal** (pre-assessment intake, `runs/intake.tsx`) | Centred non-dismissable dialog on a darker backdrop (`overlayClassName="bg-black/45 …"`); one question card on top, up to 3 cards peeking below (scaled from the bottom, faded, content hidden); Next/Enter slides the top card away, Back brings it back; "Question n of N" + dot progress; a quiet skip link below the stack; AI working states render inside the same dialog |
 | **Progressive disclosure** | Hide secondary actions until relevant (e.g. manual "Rate" only when no open question covers a requirement or AI is paused) |
 | **Loading** | Skeletons for lists; a centred "Working" card (lime icon + pulse) for AI jobs, polling in the background |
@@ -309,7 +319,7 @@ Small pills (`h-5`, `text-xs`). Status badges use tinted backgrounds of the stat
 ## 11. Accessibility
 
 - **Contrast:** body text on white/grey meets WCAG AA; never lime text on light backgrounds; text on lime and on glass cards is black.
-- **Selected states keep their contrast on hover** (selected black pills keep white text).
+- **Selected states keep their contrast on hover** (selected black tabs keep white text).
 - **Focus:** every interactive element shows a lime focus ring (`focus-visible:ring-3 ring-ring/40–50`).
 - **Labels:** icon-only buttons have `aria-label`; toggles use `aria-pressed`; form fields have associated `<Label>`s.
 - **Keyboard:** dialogs trap focus (Radix); Enter sends a chat message, Shift+Enter adds a line; menus and selects are fully keyboard-operable.
@@ -333,9 +343,9 @@ Driven by `next-themes` (`class="dark"`), user-selectable in the account menu (L
 | Do | Don't |
 |---|---|
 | Use one black primary action per area | Put several black buttons side by side |
-| Keep dropdowns as rounded rectangles (`10px` / `12px` / `6px`) | Make selects, menus or options pill-shaped |
-| Use `not-data-active:hover:` for hover styles on pill selectors | Let hover change text colour on a selected black pill |
-| Use pixel radii for small rectangular controls | Use `rounded-lg`/`rounded-xl` on small controls (they render as pills, §6) |
+| Keep controls as rounded rectangles (§6) | Use `rounded-full` on anything but avatars, dots, progress bars and the switch |
+| Use `not-data-active:hover:` for hover styles on tab-like selectors | Let hover change text colour on a selected black tab |
+| Use the named radii from §6 | Invent new pixel radii per component |
 | Use lime for highlights and AI moments | Use lime for body text or large areas |
 | Show real data in charts, or no chart | Add decorative charts that look like data |
 | Reuse `PageHeader`, `Panel`, `Stat`, `PasswordInput` | Rebuild headers, cards or password fields ad hoc |

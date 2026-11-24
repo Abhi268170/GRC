@@ -12,7 +12,7 @@ export function PageHeader({ title, eyebrow, description, actions, back, meta }:
   return (
     <div className="mb-8 pt-4">
       {back && (
-        <Link href={back.href} className="mb-5 inline-flex items-center gap-2 rounded-full bg-card px-3 py-1.5 text-xs text-muted-foreground transition hover:text-foreground">
+        <Link href={back.href} className="mb-5 inline-flex items-center gap-2 rounded-lg bg-card px-3 py-1.5 text-xs text-muted-foreground transition hover:text-foreground">
           <ArrowLeft className="size-3.5" /> {back.label}
         </Link>
       )}
@@ -47,7 +47,7 @@ export function EmptyState({ icon: Icon, title, text, action }: {
 }) {
   return (
     <div className="flex flex-col items-center justify-center rounded-3xl bg-card px-6 py-20 text-center">
-      <span className="mb-5 flex size-12 items-center justify-center rounded-full bg-brand text-brand-foreground">
+      <span className="mb-5 flex size-12 items-center justify-center rounded-xl bg-brand text-brand-foreground">
         <Icon className="size-5" />
       </span>
       <p className="text-lg font-medium">{title}</p>

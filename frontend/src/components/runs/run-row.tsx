@@ -8,7 +8,7 @@ import type { RunSummary } from "@/lib/types";
 export function RunRow({ run }: { run: RunSummary }) {
   return (
     <Link href={`/app/runs/${run.id}`} className="group flex items-center gap-5 rounded-3xl bg-card px-5 py-4 transition hover:ring-2 hover:ring-brand/60">
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-muted text-xs font-medium">{initials(run.title)}</span>
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-muted text-xs font-medium">{initials(run.title)}</span>
       <div className="min-w-0 flex-1">
         <p className="flex items-center gap-2 truncate text-[15px] font-medium">
           {run.title}

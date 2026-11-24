@@ -59,7 +59,7 @@ function IntakeCard({ q, index, total, answer, onAnswer, onBack, onNext, isLast,
         <div className="mt-5 flex flex-wrap gap-1.5">
           {q.options.map((o) => (
             <button key={o} type="button" onClick={() => onAnswer(answer === o ? "" : o)} aria-pressed={answer === o}
-              className={`rounded-full px-3.5 py-1.5 text-sm transition ${answer === o ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/70"}`}>
+              className={`rounded-lg px-3.5 py-1.5 text-sm transition ${answer === o ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/70"}`}>
               {o}
             </button>
           ))}

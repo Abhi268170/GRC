@@ -44,7 +44,7 @@ function QuestionCard({ q, current, editable, onNa }: { q: QuestionState; curren
         </div>
       )}
       {current && editable && q.kind === "base" && (
-        <button onClick={onNa} className="mt-4 inline-flex items-center gap-1 rounded-full bg-white/60 px-3 py-1 text-xs text-black/70 hover:text-black">
+        <button onClick={onNa} className="mt-4 inline-flex items-center gap-1 rounded-lg bg-white/60 px-3 py-1 text-xs text-black/70 hover:text-black">
           <Ban className="size-3" /> Doesn't apply to us
         </button>
       )}
@@ -182,7 +182,7 @@ export function Chat({ ws, onSend, onUpload, onNa, live, naBusy }: {
       </div>
 
       {ws.editable && ws.ai_paused ? (
-        <div className="m-3 rounded-full bg-muted px-5 py-3 text-center text-sm text-muted-foreground">
+        <div className="m-3 rounded-xl bg-muted px-5 py-3 text-center text-sm text-muted-foreground">
           AI assistance for this assessment has reached its limit. Rate any remaining requirements in the panel.
         </div>
       ) : ws.editable ? (
@@ -192,7 +192,7 @@ export function Chat({ ws, onSend, onUpload, onNa, live, naBusy }: {
               {attached.map((id) => {
                 const e = evidence.get(id);
                 return (
-                  <span key={id} className="inline-flex items-center gap-1.5 rounded-full bg-muted py-1.5 pl-3 pr-1.5 text-xs">
+                  <span key={id} className="inline-flex items-center gap-1.5 rounded-lg bg-muted py-1.5 pl-3 pr-1.5 text-xs">
                     {e?.processing_status === "ready" ? <FileText className="size-3.5" /> : e?.processing_status === "failed" ? <X className="size-3.5 text-destructive" /> : <Loader2 className="size-3.5 animate-spin" />}
                     <span className="max-w-48 truncate">{e?.filename ?? "Uploading…"}</span>
                     {e && e.processing_status !== "ready" && <span className="text-muted-foreground">{e.processing_status === "failed" ? "failed" : "reading…"}</span>}
@@ -231,7 +231,7 @@ export function Chat({ ws, onSend, onUpload, onNa, live, naBusy }: {
           <p className="mt-1.5 hidden text-center text-[11px] text-muted-foreground sm:block">Enter to send · Shift+Enter for a new line · Evidence is read once and reused across questions</p>
         </div>
       ) : (
-        <div className="m-3 rounded-full bg-muted px-5 py-3 text-center text-sm text-muted-foreground">
+        <div className="m-3 rounded-xl bg-muted px-5 py-3 text-center text-sm text-muted-foreground">
           {ws.domain.status === "completed" ? "This domain is completed." : !ws.domain.can_work ? `This domain is assigned to ${ws.domain.assignee?.full_name}.` : "This assessment isn't open for answers."}
         </div>
       )}

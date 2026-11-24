@@ -62,7 +62,7 @@ export default function AdminOverview() {
                 <li key={d.href + d.label}>
                   <Link href={d.href} className="flex items-center justify-between gap-3 rounded-2xl px-3 py-2.5 text-sm hover:bg-muted">
                     <span className="truncate">{d.label}</span>
-                    <span className="shrink-0 rounded-full bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">{d.kind}</span>
+                    <span className="shrink-0 rounded-md bg-muted px-2.5 py-0.5 text-xs text-muted-foreground">{d.kind}</span>
                   </Link>
                 </li>
               ))}

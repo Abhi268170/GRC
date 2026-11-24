@@ -31,7 +31,7 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
 
 const Chips = ({ items }: { items: Option[] }) =>
   items.length ? (
-    <span className="flex flex-wrap gap-1.5">{items.map((o) => <span key={o.id} className="rounded-full bg-muted px-2.5 py-0.5 text-xs">{o.label}</span>)}</span>
+    <span className="flex flex-wrap gap-1.5">{items.map((o) => <span key={o.id} className="rounded-md bg-muted px-2.5 py-0.5 text-xs">{o.label}</span>)}</span>
   ) : <span className="text-muted-foreground">Not set</span>;
 
 /** Collapsed: code, statement, badge and a summary. Expanded: guidance, evidence, templates and clauses. */

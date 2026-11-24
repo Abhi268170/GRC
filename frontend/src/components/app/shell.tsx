@@ -35,7 +35,7 @@ function TopNav({ items }: { items: NavItem[] }) {
     <nav className="hidden items-center gap-1 lg:flex">
       {items.map((item) => (
         <Link key={item.href} href={item.href}
-          className={`rounded-full px-4 py-2 text-sm transition-colors ${isActive(path, item) ? "bg-primary text-primary-foreground" : "text-foreground/75 hover:bg-card hover:text-foreground"}`}>
+          className={`rounded-lg px-4 py-2 text-sm transition-colors ${isActive(path, item) ? "bg-primary text-primary-foreground" : "text-foreground/75 hover:bg-card hover:text-foreground"}`}>
           {item.label}
         </Link>
       ))}
@@ -54,7 +54,7 @@ function MobileNav({ sections, onNavigate }: { sections: NavSection[]; onNavigat
             const Icon = item.icon;
             return (
               <Link key={item.href} href={item.href} onClick={onNavigate}
-                className={`flex items-center gap-3 rounded-full px-4 py-2.5 text-sm ${isActive(path, item) ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>
+                className={`flex items-center gap-3 rounded-lg px-4 py-2.5 text-sm ${isActive(path, item) ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`}>
                 <Icon className="size-4" />{item.label}
               </Link>
             );
@@ -129,7 +129,7 @@ function UserMenu({ me }: { me: Me }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <button className="flex items-center gap-3 rounded-full py-1 pl-1 pr-2 text-left outline-none transition hover:bg-card focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Account menu">
+        <button className="flex items-center gap-3 rounded-xl py-1 pl-1 pr-2 text-left outline-none transition hover:bg-card focus-visible:ring-3 focus-visible:ring-ring/50" aria-label="Account menu">
           <Avatar className="size-9">
             <AvatarFallback className="bg-primary text-xs font-medium text-primary-foreground">{initials(me.user.full_name)}</AvatarFallback>
           </Avatar>
@@ -202,7 +202,7 @@ export function AppShell({ roles, sections, children }: { roles: PlatformRole[];
           <Link href={items[0]?.href ?? "/"} aria-label="TrustUp home" className="shrink-0"><Logo className="h-7" /></Link>
           <TopNav items={items} />
           <div className="flex-1" />
-          {me.tenant && <span className="hidden rounded-full bg-card px-4 py-2 text-xs text-muted-foreground xl:block">{me.tenant.name}</span>}
+          {me.tenant && <span className="hidden rounded-lg bg-card px-4 py-2 text-xs text-muted-foreground xl:block">{me.tenant.name}</span>}
           <Notifications />
           <UserMenu me={me} />
         </div>

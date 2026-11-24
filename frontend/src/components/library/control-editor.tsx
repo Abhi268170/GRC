@@ -174,7 +174,7 @@ function MultiPick({ options, value, onChange }: { options: MasterDataItem[]; va
         return (
           <button key={o.id} type="button" title={o.description ?? undefined} aria-pressed={on}
             onClick={() => onChange(on ? value.filter((x) => x !== o.id) : [...value, o.id])}
-            className={`inline-flex items-center gap-1 rounded-full px-3 py-1.5 text-xs transition ${on ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/70"}`}>
+            className={`inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-xs transition ${on ? "bg-primary text-primary-foreground" : "bg-muted hover:bg-muted/70"}`}>
             {on && <Check className="size-3" />}{o.label}
           </button>
         );
@@ -203,10 +203,10 @@ function OptionSelect({ options, value, onChange, placeholder, allowNone }: {
 function Mandatory({ value, onChange }: { value: boolean | null; onChange: (v: boolean | null) => void }) {
   const opts: [boolean | null, string][] = [[null, "Not set"], [true, "Mandatory"], [false, "Optional"]];
   return (
-    <div className="inline-flex rounded-full bg-muted p-0.5">
+    <div className="inline-flex rounded-lg bg-muted p-0.5">
       {opts.map(([v, label]) => (
         <button key={label} type="button" onClick={() => onChange(v)} aria-pressed={value === v}
-          className={`rounded-full px-3 py-1 text-xs transition ${value === v ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
+          className={`rounded-md px-3 py-1 text-xs transition ${value === v ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:text-foreground"}`}>
           {label}
         </button>
       ))}
@@ -381,7 +381,7 @@ export function ControlEditor({ value, onChange, domains, domainLocked, code }: 
           <Card key={r.key} className="gap-0 py-0">
             <div className={`flex flex-wrap items-center gap-2 px-4 py-2.5 transition-colors ${isOpen ? "border-b" : ""}`}>
               <button type="button" onClick={() => toggle(r.key)} aria-expanded={isOpen}
-                className="-my-1 flex min-w-0 flex-1 items-center gap-3 rounded-[10px] py-1 text-left">
+                className="-my-1 flex min-w-0 flex-1 items-center gap-3 rounded-lg py-1 text-left">
                 <ChevronRight className={`size-4 shrink-0 text-muted-foreground transition-transform duration-300 ease-smooth ${isOpen ? "rotate-90" : ""}`} />
                 <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted text-xs font-medium">{i + 1}</span>
                 <span className="min-w-0 flex-1">

@@ -84,7 +84,7 @@ function CategoryView({ category, items }: { category: MasterDataCategory; items
       <div className="overflow-hidden rounded-3xl bg-card">
         {items.map((i) => (
           <div key={i.id} className="flex items-center gap-4 border-b px-5 py-3.5 last:border-0">
-            {i.numeric_value !== null && <span className="flex size-7 shrink-0 items-center justify-center rounded-[10px] bg-accent text-sm font-medium text-accent-foreground">{i.numeric_value}</span>}
+            {i.numeric_value !== null && <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-accent text-sm font-medium text-accent-foreground">{i.numeric_value}</span>}
             <button className="min-w-0 flex-1 text-left" onClick={() => setEditing(i)}>
               <p className={`text-sm font-medium ${i.is_active ? "" : "text-muted-foreground line-through"}`}>{i.label}</p>
               {i.description && <p className="mt-0.5 text-xs text-muted-foreground">{i.description}</p>}
@@ -256,7 +256,7 @@ function RolesView({ roles }: { roles: OrganisationalRole[] }) {
 // ---------- page ----------
 
 function Nav({ groups, active, onPick }: { groups: [string, NavEntry[]][]; active: string; onPick: (k: string) => void }) {
-  const pill = (on: boolean) => `flex w-full items-center justify-between gap-3 rounded-full px-3.5 py-1.5 text-left text-sm transition ${on ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`;
+  const pill = (on: boolean) => `flex w-full items-center justify-between gap-3 rounded-lg px-3.5 py-1.5 text-left text-sm transition ${on ? "bg-primary text-primary-foreground" : "hover:bg-muted"}`;
   return (
     <nav className="sticky top-24 max-h-[calc(100vh-7rem)] space-y-4 overflow-y-auto rounded-3xl bg-card p-3" aria-label="Master data lists">
       {groups.map(([group, entries]) => (
