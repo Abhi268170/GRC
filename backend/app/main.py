@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from app.api import (
     assessments,
     auth,
+    company,
     frameworks,
     health,
     library,
@@ -19,10 +20,10 @@ from app.api import (
     runs,
     users,
 )
-from app.core import logs, queue, ratelimit
+from app.core import cache, logs, queue, ratelimit
 from app.core.config import get_settings
 from app.core.db import TenantUnavailable, dispose_all
-from app.services import ai
+from app.services import ai, company_lookup
 
 log = logging.getLogger("api")
 
@@ -38,6 +39,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     await ai.close()
     await queue.close()
     await ratelimit.close()
+    await cache.close()
+    await company_lookup.close()
     await dispose_all()
 
 
@@ -45,7 +48,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 _docs = not get_settings().is_production
 app = FastAPI(title="TrustUp API", version="0.1.0", lifespan=lifespan, docs_url="/docs" if _docs else None,
               redoc_url=None, openapi_url="/openapi.json" if _docs else None)
-for module in (health, auth, library, library_import, frameworks, assessments, master_data, users, platform, runs, registers):
+for module in (health, auth, company, library, library_import, frameworks, assessments, master_data, users, platform, runs, registers):
     app.include_router(module.router)
 
 

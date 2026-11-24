@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { ArrowUpRight, ClipboardCheck, Gauge, ListTodo, ShieldAlert } from "lucide-react";
 import Link from "next/link";
 
-import { CatalogCard } from "@/components/app/catalog";
+import { CatalogCard, detailsConfirmed } from "@/components/app/catalog";
 import { ListSkeleton, PageHeader, SegmentBar, Stat, TickChart } from "@/components/app/page";
 import { RunRow } from "@/components/runs/run-row";
 import { api } from "@/lib/api";
@@ -62,6 +62,22 @@ export default function TenantHome() {
         />
         {runs.data && <div className="lg:mb-8"><Insight runs={all} /></div>}
       </div>
+
+      {me && !detailsConfirmed(me) && (
+        <div className="mb-4 flex flex-col gap-3 rounded-3xl bg-brand p-6 text-brand-foreground sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <p className="font-medium">{me.user.platform_role === "tenant_admin" ? "Confirm your company details" : "Your company details aren't confirmed yet"}</p>
+            <p className="text-sm opacity-80">
+              {me.user.platform_role === "tenant_admin"
+                ? "Check that they are right and complete. You do this once, before your first assessment."
+                : "A workspace admin needs to confirm them before the first assessment can start."}
+            </p>
+          </div>
+          <Link href="/app/company" className="inline-flex shrink-0 items-center gap-2 self-start rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground sm:self-auto">
+            {me.user.platform_role === "tenant_admin" ? "Review details" : "View details"} <ArrowUpRight className="size-4" />
+          </Link>
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Stat label="Maturity" icon={Gauge} value={latest?.score?.toFixed(1) ?? "—"} unit="/4" hint={latest ? latest.title : "No approved assessment yet"} href={latest ? `/app/runs/${latest.id}` : "/app/runs"}>

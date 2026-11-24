@@ -29,6 +29,8 @@ from ai_contracts import (
     IntakeIn,
     IntakeQuestions,
     Narrative,
+    NogaClassifyIn,
+    NogaRanking,
     ParsedFramework,
     ParseFrameworkIn,
     ResultsIn,
@@ -158,6 +160,7 @@ task("/intake/tailor", TailorIn, Tailoring, tasks.tailor)
 task("/evidence/digest", EvidenceDigestIn, EvidenceDigest, tasks.evidence_digest)
 task("/cross-analysis", CrossAnalysisIn, CrossResult, tasks.cross_analysis)
 task("/results/narrative", ResultsIn, Narrative, tasks.results_narrative)
+task("/noga/classify", NogaClassifyIn, NogaRanking, tasks.classify_noga)
 
 
 @v1.post("/guide/system", response_model=GuideSystemOut)

@@ -47,6 +47,17 @@ class Settings(BaseSettings):
     signup_window_seconds: int = 3600
     max_request_bytes: int = 32 * 1024 * 1024    # any request body (the largest upload is 30 MB)
 
+    # Company lookup at sign-up. The Swiss commercial register (Zefix) needs credentials issued by
+    # the Federal Office of Justice; without them the visitor enters the company by hand.
+    zefix_username: str = ""
+    zefix_password: str = ""
+    zefix_url: str = "https://www.zefix.admin.ch/ZefixPublicREST/api/v1"
+    wikidata_enabled: bool = True                # website and headcount, where Wikidata has them
+    company_search_max_per_ip: int = 120         # register and industry searches per window (typing sends several)
+    company_ai_max_per_ip: int = 20              # company previews and industry suggestions per window
+    company_ai_max_total: int = 600              # ... across all addresses (each can cost a model call)
+    company_lookup_window_seconds: int = 3600
+
     # Company databases: each open one holds its own connection pool, so only the most recently
     # used stay open. Pool sizes are per company and per process.
     tenant_pool_cache_size: int = 50

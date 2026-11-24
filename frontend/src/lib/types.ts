@@ -16,6 +16,8 @@ export interface Tenant {
   name: string;
   industry: string | null;
   employee_count: string | null;
+  /** The company details the user saved and the industry code (noga_*). */
+  profile?: Record<string, unknown>;
 }
 
 export interface Me {
@@ -559,3 +561,74 @@ export interface ControlImport {
 }
 
 export type ControlImportListItem = Pick<ControlImport, "id" | "filename" | "status" | "created_at" | "created_by" | "applied_at" | "summary">;
+
+/** One NOGA 2025 industry code (six digits) with the section and division it belongs to. */
+export interface NogaCandidate {
+  code: string;
+  label_en: string;
+  label_de: string;
+  section: string;
+  section_label_en: string;
+  division: string;
+  division_label_en: string;
+  confidence: "high" | "medium" | "low" | null;
+}
+
+/** A company found in the commercial register. */
+export interface CompanyHit {
+  uid: string;
+  name: string;
+  legal_seat: string | null;
+  legal_form: string | null;
+}
+
+export interface CompanySearch {
+  results: CompanyHit[];
+  too_many: boolean;
+}
+
+/** One company from the register with what public sources added. */
+export interface CompanyProfile {
+  uid: string;
+  name: string;
+  legal_form: string | null;
+  legal_seat: string | null;
+  canton: string | null;
+  purpose: string | null;
+  address: { street: string | null; house_number: string | null; zip: string | null; city: string | null };
+  address_line: string;
+  website: string | null;
+  employees: number | null;
+  employees_year: number | null;
+  employee_range: string | null;
+  industries: NogaCandidate[];
+  sources: string[];
+}
+
+/** What a company says about itself. Every field is optional and the user can change it. */
+export interface CompanyDetails {
+  registration_number: string | null;
+  legal_form: string | null;
+  street: string | null;
+  house_number: string | null;
+  zip: string | null;
+  city: string | null;
+  region: string | null;
+  country: string | null;
+  website: string | null;
+  description: string | null;
+}
+
+/** The company profile page: GET and PUT /company/profile. */
+export interface CompanyProfileData {
+  name: string;
+  industry: string | null;
+  noga: NogaCandidate | null;
+  employee_count: string | null;
+  details: CompanyDetails;
+  /** When a workspace admin confirmed the details (needed once, before the first assessment). */
+  verified_at: string | null;
+  verified_by: string | null;
+  /** Labels of what still has to be filled in before the details can be confirmed. */
+  missing: string[];
+}

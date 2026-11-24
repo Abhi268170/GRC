@@ -7,6 +7,7 @@ from fastapi.responses import Response as RawResponse
 from sqlalchemy import func, select
 from app.core.auth import ControlDB, TenantDB, TenantMember
 from app.core.config import get_settings
+from app.core.db import tenant_of
 from app.core.queue import enqueue
 from app.models import (
     ActionItem,
@@ -17,6 +18,7 @@ from app.models import (
     ReviewComment,
     Risk,
     RunDomain,
+    Tenant,
 )
 from app.services import ai, export, jobs, snapshot
 from app.services import runs as svc
@@ -37,6 +39,10 @@ async def start_run(body: StartIn, db: TenantDB, control: ControlDB, me: TenantM
     published = await control.get(AssessmentVersion, body.assessment_version_id)
     if published is None or published.status != "published":
         raise HTTPException(404, "This assessment isn't available")
+    # The assessment is tailored to the company, so its details must have been checked by an admin once.
+    if not (await control.get(Tenant, tenant_of(db))).profile_confirmed:
+        raise HTTPException(409, "Confirm your company details before starting your first assessment." if me.platform_role == "tenant_admin"
+                            else "A workspace admin needs to confirm the company details before the first assessment can start.")
     # Starting a run costs an AI call, so the number of open runs and the monthly AI budget are capped.
     open_runs = (await db.execute(select(func.count()).select_from(AssessmentRun).where(AssessmentRun.status != "approved"))).scalar()
     if open_runs >= get_settings().max_open_runs_per_tenant:

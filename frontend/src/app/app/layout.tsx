@@ -1,6 +1,6 @@
 "use client";
 
-import { ClipboardCheck, ClipboardList, Home, ListTodo, ShieldAlert, Users } from "lucide-react";
+import { Building2, ClipboardCheck, ClipboardList, Home, ListTodo, ShieldAlert, Users } from "lucide-react";
 
 import { AppShell, type NavSection } from "@/components/app/shell";
 import { useMe } from "@/lib/hooks";
@@ -22,7 +22,13 @@ export default function TenantLayout({ children }: { children: React.ReactNode }
         { href: "/app/risks", label: "Risks", icon: ShieldAlert },
       ],
     },
-    ...(me?.user.platform_role === "tenant_admin" ? [{ title: "Workspace", items: [{ href: "/app/team", label: "Team", icon: Users }] }] : []),
+    {
+      title: "Workspace",
+      items: [
+        { href: "/app/company", label: "Company", icon: Building2 },
+        ...(me?.user.platform_role === "tenant_admin" ? [{ href: "/app/team", label: "Team", icon: Users }] : []),
+      ],
+    },
   ];
   return <AppShell roles={["tenant_admin", "tenant_user"]} sections={nav}>{children}</AppShell>;
 }

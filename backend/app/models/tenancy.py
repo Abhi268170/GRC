@@ -27,6 +27,11 @@ class Tenant(IdMixin, TimestampMixin, Base):
     db_name: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
     status: Mapped[str] = mapped_column(String(16), server_default="active", nullable=False)
 
+    @property
+    def profile_confirmed(self) -> bool:
+        """A workspace admin has checked and confirmed the company details (needed before the first assessment)."""
+        return bool((self.profile or {}).get("verified_at"))
+
     __table_args__ = (
         one_of("status", TENANT_STATUS),
         CheckConstraint(

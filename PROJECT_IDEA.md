@@ -130,6 +130,9 @@ Assessment Run (Tenant)
 ### 5.1 Tenant Onboarding
 - **Self-service signup.**
 - Collect only **basic company information** (the Company Profile), e.g. **industry** and **number of employees**. Signup stays short.
+- The company is **found in the Swiss commercial register** and its details are proposed from there; the industry (a NOGA 2025 code) is suggested by AI. The user can change everything and is the one who saves it. A company that isn't listed is entered by hand, with the same fields (decision 47).
+- A **company profile page** shows the details to every member; a workspace admin can edit them.
+- **Before the first assessment** a workspace admin confirms once that the company details are right and complete (decision 48).
 - Assessment-specific context is gathered later, in the **Pre-Assessment Intake** (see 5.7), when it is actually needed.
 
 ### 5.2 Framework Management (Super Admin)
@@ -306,7 +309,7 @@ Scores are shown to one decimal place (e.g. 2.4 / 4). A **"weakest link" flag** 
 
 ### Tenant Onboarding
 ```
-Self-signup → Basic company profile (industry, employees) → Invite users + assign roles
+Self-signup: find the company in the register → confirm industry and size → create the account → Invite users + assign roles
 ```
 
 ### Super Admin: Create & Publish an Assessment
@@ -385,6 +388,9 @@ Choose published assessment → Pre-Assessment Intake (AI tailors questions)
 | 44 | Separate AI service | Every model call goes through a third deployable, `ai-service`: stateless, no database, reachable only from the backend and worker with a shared token. It owns the prompts, output schemas, tool definitions, model settings and the provider key. The backend sends structured data (`packages/ai_contracts`), runs the guide's tools itself between model calls, and keeps the AI budget and usage records. |
 | 45 | Production hardening | After a technical review with 73 findings: revocable sessions, login and sign-up limits, strict settings in production, request and upload limits, a monthly AI budget per company and a cap on open runs, tighter permissions (tenants can't read the control library; intake, submission and registers check who may act), jobs that can't leave a run stuck, row locks on run state and chat turns, a reverse proxy as the only published service, and automated tests. Record: `PRODUCTION_READINESS.md`. |
 | 46 | Deployment shape | `docker-compose.yml` is the production stack (proxy, frontend, backend, worker, AI service, Postgres, Redis, file store); `docker-compose.dev.yml` adds hot reload and published ports; `docker-compose.test.yml` runs the tests against throwaway services. |
+| 47 | Company lookup and company profile | Sign-up has three steps: find the company, confirm its details, industry and size, create the account. The company is searched in the Swiss commercial register (Zefix, official API with credentials); the backend reads its entry, adds website and headcount from Wikidata where it has them, and the AI service suggests the industry as NOGA 2025 codes from the register's purpose text. What is found is only a proposal: it is shown to the user, who can change every field, and it is saved when the user saves (creating the workspace, or "Save changes" on the company profile page). A company that isn't listed is entered by hand with one sentence on what it does; the same classification suggests the industry and the same fields can be filled in. The company profile page (`/app/company`) shows every field to all members, lets a workspace admin edit them, and can fill the form from the register again. The industry is stored as a NOGA code (`tenant.profile.noga_code`) and its English title (`tenant.industry`). Register lookups live in the backend (credentials, caching, rate limits); only the classification is in the AI service. Decided 2026-11-23: official register API, NOGA codes, Wikidata included, details presented and saved by the user, a profile page. |
+| 48 | Company details confirmed before the first assessment | A workspace admin must confirm once that the company details are right and complete before anyone in the company can start an assessment. Confirming needs: what the company does, an industry from the list, street, postcode, city and country (name and employee range are always required). It is recorded with who and when (`tenant.profile.verified_at`, `verified_by`). Starting an assessment while unconfirmed is refused by the server (409); the catalog shows a dialog that takes an admin to the company profile page and back, and tells a team member that an admin has to do it. Later edits keep the confirmation but can't empty those fields. Sign-up does not count as confirming. Decided 2026-11-23. |
+| 49 | Review page for a domain | Each domain has a Review page next to the conversation: the list of its requirements with their status on the left, one requirement in full on the right (what it asks, the rating and its reasons, the answers noted in the conversation, the evidence used). "Confirm and next" accepts the rating and moves to the next one still to check; "Change" opens the same answer and rating panel as the conversation page. The Review button can be opened at any time, also on a completed domain (read only). "Complete domain" is unchanged: it is on both pages and only works once a person has confirmed every rating. Confirming in the side panel, including "Confirm all", stays. No backend change. |
 | 37 | Master data screens | Grouped navigation (Control classification, Organisation, Assessment & scoring, Risks & actions, link to Domains); selection is in the URL. |
 
 ---

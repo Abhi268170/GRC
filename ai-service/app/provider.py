@@ -111,16 +111,19 @@ async def structured(
     model: str | None = None,
     effort: str = "medium",
     max_tokens: int = 64000,
+    cache_system: bool = False,
 ) -> tuple[T, Usage]:
-    """One structured call. Raises AIFailure on refusal, truncation, or provider failure."""
+    """One structured call. Raises AIFailure on refusal, truncation, or provider failure.
+    cache_system: the system prompt is long and the same on every call, so let the provider cache it."""
     api = client()
+    system_blocks: Any = [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}] if cache_system else system
     try:
         async with slots(), api.beta.messages.stream(
             model=model or analysis_model(),
             max_tokens=max_tokens,
             betas=[FALLBACK_BETA],
             fallbacks="default",
-            system=system,
+            system=system_blocks,
             messages=[{"role": "user", "content": content}],
             output_format=output,
             output_config={"effort": effort},

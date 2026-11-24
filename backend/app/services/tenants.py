@@ -94,10 +94,11 @@ async def _database_exists(name: str) -> bool:
 
 
 async def provision_tenant(control: AsyncSession, *, company_name: str, industry: str | None, employee_count: str | None,
-                           email: str, full_name: str, password_hash: str) -> tuple[Tenant, AppUser]:
+                           email: str, full_name: str, password_hash: str, profile: dict | None = None) -> tuple[Tenant, AppUser]:
     """Create a company: registry row, its own database, the master data mirror and its first admin.
     If any step fails, everything created so far is removed again."""
-    tenant = Tenant(id=uuid.uuid4(), name=company_name, industry=industry, employee_count=employee_count, status="provisioning")
+    tenant = Tenant(id=uuid.uuid4(), name=company_name, industry=industry, employee_count=employee_count,
+                    profile=profile or {}, status="provisioning")
     tenant.db_name = database_name_for(tenant.id)
     control.add(tenant)
     await control.flush()

@@ -114,7 +114,11 @@ tenant                                 -- control database only: the registry of
   id, name,
   industry            text,          -- company profile (signup)
   employee_count      text,          -- range: '1-10','11-50','51-200','201-1000','1000+'
-  profile             jsonb default '{}',   -- extra profile fields later
+  profile             jsonb default '{}',   -- what the user saved at sign-up or on the company profile page (decision 47):
+                                            -- registration_number, legal_form, street, house_number, zip, city, region,
+                                            -- country, website, description; and the industry code: noga_code, noga_label,
+                                            -- noga_section, noga_section_label; and who confirmed the details (decision 48):
+                                            -- verified_at, verified_by, verified_by_id
   db_name             text unique not null, -- the company's own database on the same server
   status              text check in ('provisioning','active','migration_failed'),
                       -- 'provisioning' while signup sets it up; 'migration_failed': offline until its database is upgraded

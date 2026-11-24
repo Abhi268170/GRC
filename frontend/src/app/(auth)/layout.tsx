@@ -25,9 +25,10 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         </div>
         <p className="text-sm text-muted-foreground">NIST CSF 2.0 · ISO/IEC 27001:2022</p>
       </aside>
-      <main className="relative flex items-center justify-center rounded-[2rem] bg-card px-6 py-12">
+      <main className="relative flex min-w-0 items-center justify-center rounded-3xl bg-card px-6 py-12">
         <ThemeToggle className="absolute right-4 top-4" />
-        <div className="w-full max-w-sm">
+        {/* A page with more to fill in (sign-up) marks itself data-wide to get a wider column. */}
+        <div className="w-full min-w-0 max-w-sm has-[[data-wide]]:max-w-xl">
           <Logo className="mb-10 block h-8 lg:hidden" />
           {children}
         </div>

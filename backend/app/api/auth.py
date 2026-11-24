@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.company import industry_fields
 from app.api.schemas import ChangePasswordIn, LoginIn, MeOut, SignupIn, TenantOut, UserOut
 from app.core import ratelimit
 from app.core.auth import COOKIE_NAME, ControlDB, CurrentUser, HomeDB, claims_of, create_token
@@ -88,6 +89,12 @@ async def signup(body: SignupIn, request: Request, response: Response, control: 
         raise HTTPException(403, "Sign-up is closed at the moment. Contact us to get a workspace.")
     if body.employee_count not in EMPLOYEE_RANGES:
         raise HTTPException(422, "Invalid employee count")
+    industry, profile = body.industry, body.details.stored()
+    if body.noga_code:
+        industry, code_fields = industry_fields(body.noga_code)
+        profile |= code_fields
+    if not industry:
+        raise HTTPException(422, "Choose an industry")
     email = body.email.lower()
     taken = HTTPException(409, "An account with this email already exists")
     if await control.get(LoginDirectory, email):
@@ -98,8 +105,9 @@ async def signup(body: SignupIn, request: Request, response: Response, control: 
         raise ratelimit.too_many("Sign-up is busy right now. Try again in a little while.")
     try:
         tenant, user = await tenants.provision_tenant(
-            control, company_name=body.company_name, industry=body.industry, employee_count=body.employee_count,
-            email=email, full_name=body.full_name, password_hash=await hash_password_async(body.password))
+            control, company_name=body.company_name, industry=industry, employee_count=body.employee_count,
+            profile=profile, email=email, full_name=body.full_name,
+            password_hash=await hash_password_async(body.password))
     except tenants.EmailTaken:
         raise taken from None
     _set_cookie(response, user, tenant.id)

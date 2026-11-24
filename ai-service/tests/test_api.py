@@ -99,3 +99,24 @@ def test_cost_is_estimated_from_list_prices():
 
     usage = provider.usage_of("claude-sonnet-5-5", Raw)
     assert usage.cost_usd == 3.0 and usage.model == "claude-sonnet-5-5"
+
+
+def test_noga_classification_drops_unknown_codes_and_caches_the_list(client, monkeypatch):
+    seen = {}
+
+    async def fake(**kwargs):
+        seen.update(kwargs)
+        picks = [tasks.NogaPick(code="256100", confidence="high"), tasks.NogaPick(code="000000", confidence="low"),
+                 tasks.NogaPick(code="25", confidence="low"), tasks.NogaPick(code="256100", confidence="low"),
+                 tasks.NogaPick(code=" 256300 ", confidence="medium")]
+        return tasks.NogaPicks(picks=picks), USAGE
+
+    monkeypatch.setattr(provider, "structured", fake)
+    response = client.post("/v1/noga/classify", json={"text": "Herstellung von Messerwaren", "company_name": "Acme AG", "limit": 5}, headers=AUTH)
+    assert response.status_code == 200
+    found = response.json()["output"]["candidates"]
+    assert [(c["code"], c["confidence"]) for c in found] == [("256100", "high"), ("256300", "medium")]
+    assert found[0]["label_en"] == "Manufacture of cutlery" and found[0]["section"] == "C" and found[0]["division"] == "25"
+    assert seen["cache_system"] is True and seen["effort"] == "low" and seen["model"] == provider.conversation_model()
+    assert "Herstellung von Messerwaren" in seen["content"] and seen["system"] == tasks.noga_system()
+    assert client.post("/v1/noga/classify", json={"text": "ab"}, headers=AUTH).status_code == 422

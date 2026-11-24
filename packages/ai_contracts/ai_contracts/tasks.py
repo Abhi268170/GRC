@@ -276,10 +276,41 @@ class Narrative(BaseModel):
     risks: list[SuggestedRisk] = Field(description="New risks, only for gaps listed as having no risk template.")
 
 
+# ---------- industry classification: POST /v1/noga/classify ----------
+
+
+class NogaClassifyIn(BaseModel):
+    """What a company does, in any language: usually the purpose clause from the commercial register."""
+
+    text: str = Field(min_length=3, max_length=20_000)
+    company_name: str | None = Field(default=None, max_length=500)
+    limit: int = Field(default=5, ge=1, le=10)
+
+
+class NogaCandidate(BaseModel):
+    """One NOGA 2025 code (six digits) with the section and division it belongs to."""
+
+    code: str
+    label_en: str
+    label_de: str
+    section: str            # "C"
+    section_label_en: str
+    section_label_de: str
+    division: str           # "25"
+    division_label_en: str
+    division_label_de: str
+    confidence: Literal["high", "medium", "low"] | None = None  # only on codes the model chose
+
+
+class NogaRanking(BaseModel):
+    candidates: list[NogaCandidate]  # best first; empty when the text doesn't say what the company does
+
+
 __all__ = [
     "AdaptedAction", "AdaptedRisk", "CrossAnalysisIn", "CrossRating", "CrossResult", "DomainNarrative", "DomainQuestion",
     "EvidenceDigest", "EvidenceDigestIn", "ExistingSuggestion", "FrameworkCoverage", "GenerateQuestionIn", "IntakeAnswer",
-    "IntakeIn", "IntakeQuestion", "IntakeQuestions", "KeyedQuestion", "Narrative", "OpenControl", "OpenDomain",
+    "IntakeIn", "IntakeQuestion", "IntakeQuestions", "KeyedQuestion", "Narrative", "NogaCandidate", "NogaClassifyIn",
+    "NogaRanking", "OpenControl", "OpenDomain",
     "OpenRequirement", "ParseFrameworkIn", "ParsedClause", "ParsedFramework", "RatedRequirement", "ResultControl",
     "ResultDomain", "ResultsIn", "SuggestedAction", "SuggestedRisk", "TagQuestionIn", "Tags", "TailorDomainIn", "TailorIn",
     "TailoredDomain", "TailoredQuestion", "Tailoring", "TemplateSlot",

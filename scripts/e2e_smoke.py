@@ -143,6 +143,9 @@ def signup(label):
     _, me = c.call("POST", "/auth/signup", {"company_name": f"E2E {label} {STAMP}", "industry": "Software / SaaS", "employee_count": "11-50",
                                            "full_name": f"{label} Admin", "email": email, "password": "correct-horse-battery"}, 201)
     ok(f"company {label} signed up in {time.time() - t0:.1f}s, tenant {me['tenant']['id']}")
+    c.call("PUT", "/company/profile", {"name": f"E2E {label} {STAMP}", "employee_count": "11-50", "noga_code": "582900", "confirm": True,
+                                       "details": {"description": "Builds accounting software.", "street": "Main Street", "zip": "8000",
+                                                   "city": "Zurich", "country": "Switzerland"}}, 200)
     c.email, c.tenant_id, c.user_id = email, me["tenant"]["id"], me["user"]["id"]
     return c
 

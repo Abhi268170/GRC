@@ -77,13 +77,22 @@ async def client(prepared):
         yield c
 
 
-async def signup(company: str = "Acme") -> tuple[httpx.AsyncClient, dict]:
-    """A new company with its admin signed in. The caller closes the client."""
+CONFIRMED_DETAILS = {"description": "Builds accounting software.", "street": "Main Street", "house_number": "1", "zip": "8000",
+                     "city": "Zurich", "country": "Switzerland"}
+
+
+async def signup(company: str = "Acme", confirmed: bool = True) -> tuple[httpx.AsyncClient, dict]:
+    """A new company with its admin signed in. The caller closes the client.
+    confirmed: the admin has confirmed the company details, so assessments can be started."""
     c = new_client()
     email = f"admin-{uuid.uuid4().hex[:10]}@example.com"
     r = await c.post("/auth/signup", json={"company_name": company, "industry": "Software / SaaS", "employee_count": "11-50",
                                            "full_name": "Ada Admin", "email": email, "password": PASSWORD})
     assert r.status_code == 201, r.text
+    if confirmed:
+        done = await c.put("/company/profile", json={"name": company, "employee_count": "11-50", "noga_code": "582900",
+                                                     "details": CONFIRMED_DETAILS, "confirm": True})
+        assert done.status_code == 200, done.text
     return c, r.json() | {"email": email}
 
 
