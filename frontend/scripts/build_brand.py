@@ -1,96 +1,142 @@
-"""Build TrustUp logo SVGs (wordmark converted to outlines) in the app's palette.
+"""Build every TrustUp logo file from the designer's source SVG.
 
-Usage (from frontend/):
-  curl -sL -o /tmp/SpaceGrotesk.ttf "https://github.com/google/fonts/raw/main/ofl/spacegrotesk/SpaceGrotesk%5Bwght%5D.ttf"
-  uv run --python 3.13 --with fonttools python -I scripts/build_brand.py /tmp/SpaceGrotesk.ttf /tmp/brand-out
-Then copy /tmp/brand-out/trustup-*.svg to public/brand/, trustup-app-icon-small.svg to src/app/icon.svg,
-and regenerate src/components/app/brand-paths.ts from /tmp/brand-out/paths.json.
-Colours mirror frontend/src/app/globals.css; update both together.
-Space Grotesk is licensed under the SIL Open Font License 1.1.
+Source: scripts/brand/trustup-logo-source.svg (the stacked logo: the "tu" mark with a tick,
+above the "trustup" wordmark). This script takes the mark and the wordmark out of it and writes:
+
+- public/brand/trustup-mark.svg                         the mark on its own
+- public/brand/trustup-logo-{light,dark}.svg            mark left, wordmark right (headers)
+- public/brand/trustup-logo-stacked-{light,dark}.svg    mark above wordmark (as designed)
+- public/brand/trustup-app-icon.svg                     the mark on a white rounded square
+- src/app/icon.svg                                      favicon (the same, mark slightly larger)
+- src/components/app/brand-paths.ts                     the same shapes for the <Logo> component
+
+"light" files are for light backgrounds, "dark" files for dark ones. The mark's colours never
+change. The wordmark is the source's pale green on dark backgrounds; that is too faint on white,
+so on light backgrounds it takes the mark's dark green.
+
+Usage (from frontend/, standard library only):  python3 scripts/build_brand.py
+Then, for the Apple touch icon (a PNG), render public/brand/trustup-app-icon.svg at 180x180
+to src/app/apple-icon.png.
 """
-import json, math, sys
-from fontTools.ttLib import TTFont
-from fontTools.varLib.instancer import instantiateVariableFont
-from fontTools.pens.svgPathPen import SVGPathPen
-from fontTools.pens.transformPen import TransformPen
+from __future__ import annotations
 
-font_path, out = sys.argv[1], sys.argv[2]
-font = instantiateVariableFont(TTFont(font_path), {"wght": 700})
-upm = font["head"].unitsPerEm
-gs, cmap, hmtx = font.getGlyphSet(), font.getBestCmap(), font["hmtx"]
-asc, desc = font["hhea"].ascent, font["hhea"].descent  # desc is negative
+import json
+import re
+from pathlib import Path
 
-F = 50.0                      # wordmark font size (design's small lockup)
-LS = -2.0                     # letter-spacing at that size (design: -2px @ 50px)
-s = F / upm
+ROOT = Path(__file__).resolve().parent.parent
+SOURCE = ROOT / "scripts/brand/trustup-logo-source.svg"
+BRAND = ROOT / "public/brand"
 
-def word_paths(text, x0):
-    """Return (path_d, x_after) for text starting at x0; baseline y computed below."""
-    pen = SVGPathPen(gs)
-    x = x0
-    for ch in text:
-        g = cmap[ord(ch)]
-        tp = TransformPen(pen, (s, 0, 0, -s, x, BASE))  # flip y, scale to F
-        gs[g].draw(tp)
-        x += hmtx[g][0] * s + LS
-    return pen.getCommands(), x
+# The app icon's tile is white: on a dark tile the mark's dark green arm almost disappears at favicon size.
+ICON_BACKGROUND = "#FFFFFF"
+WORDMARK_ON_DARK = None    # taken from the source
+WORDMARK_ON_LIGHT = None   # the mark's darkest green, taken from the source
 
-# CSS line-height:1 box of height F; baseline sits where the content area is centred in it.
-content = (asc - desc) * s
-BASE_IN_BOX = (F - content) / 2 + asc * s
-MARK = 1.2 * F               # 60px mark for 50px text, as in the design
-GAP = 0.2 * F                # 10px gap
-H = max(MARK, F)
-BOX_TOP = (H - F) / 2
-BASE = BOX_TOP + BASE_IN_BOX
-TX = MARK + GAP
-trust_d, x_mid = word_paths("trust", TX)
-up_d, x_end = word_paths("up", x_mid)
-W = x_end - LS               # no trailing letter-spacing
 
-def oklch_hex(L, C, h):
-    a, b = C * math.cos(math.radians(h)), C * math.sin(math.radians(h))
-    l_, m_, s_ = L + .3963377774*a + .2158037573*b, L - .1055613458*a - .0638541728*b, L - .0894841775*a - 1.2914855480*b
-    l, m, s3 = l_**3, m_**3, s_**3
-    rgb = (4.0767416621*l - 3.3077115913*m + .2309699292*s3, -1.2684380046*l + 2.6097574011*m - .3413193965*s3, -.0041960863*l - .7034186147*m + 1.7076147010*s3)
-    f = lambda c: max(0, min(1, 12.92*c if c <= .0031308 else 1.055*c**(1/2.4) - .055))
-    return "#%02X%02X%02X" % tuple(round(f(c)*255) for c in rgb)
+def hex_of(fill: str) -> str:
+    r, g, b = (int(v) for v in re.match(r"rgb\((\d+),(\d+),(\d+)\)", fill).groups())
+    return f"#{r:02X}{g:02X}{b:02X}"
 
-# App palette (frontend/src/app/globals.css)
-INK = oklch_hex(0.17, 0, 0)               # --primary (light)
-OFF = oklch_hex(0.96, 0, 0)               # --primary (dark) / off-white
-LIME = oklch_hex(0.85, 0.2, 145)          # --brand
-STRONG = oklch_hex(0.52, 0.15, 145)       # --brand-strong (new): lime family, readable on white
 
-MARK_INNER = '<g transform="rotate(-45 32 32)"><rect x="5" y="23" width="32" height="18" rx="9" fill="none" stroke="{a}" stroke-width="{w}"/><rect x="27" y="23" width="32" height="18" rx="9" fill="none" stroke="{b}" stroke-width="{w}"/></g>'
+def groups(svg: str) -> list[dict]:
+    """The source nests one <svg viewBox> per part; each holds a <g> of filled paths."""
+    out = []
+    for view_box, body in re.findall(r'viewBox="([\d. -]+)" preserveAspectRatio="none"><g[^>]*>(.*?)</g>', svg, flags=re.S):
+        x, y, w, h = (float(v) for v in view_box.split())
+        paths = [(hex_of(fill), " ".join(d.split())) for fill, d in re.findall(r'fill="(rgb\([^"]+\))" d="([^"]+)"', body)]
+        out.append({"x": x, "y": y, "w": w, "h": h, "paths": paths})
+    return out
 
-def r(v): return f"{v:.2f}".rstrip("0").rstrip(".")
 
-def lockup(name, link1, link2, trust, up, title):
-    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {r(W)} {r(H)}" width="{r(W)}" height="{r(H)}" role="img" aria-label="{title}">'
-           f'<title>{title}</title>'
-           f'<svg x="0" y="{r((H-MARK)/2)}" width="{r(MARK)}" height="{r(MARK)}" viewBox="0 0 64 64">{MARK_INNER.format(a=link1, b=link2, w=5.5)}</svg>'
-           f'<path fill="{trust}" d="{trust_d}"/><path fill="{up}" d="{up_d}"/></svg>')
-    open(f"{out}/{name}", "w").write(svg)
+parts = groups(SOURCE.read_text())
+assert len(parts) == 2, "expected the wordmark and the mark"
+wordmark, mark = sorted(parts, key=lambda p: len({fill for fill, _ in p["paths"]}))  # the wordmark has one colour
+WORDMARK_ON_DARK = wordmark["paths"][0][0]
+# Darkest colour of the mark: lowest sum of channels.
+WORDMARK_ON_LIGHT = min((fill for fill, _ in mark["paths"]), key=lambda c: sum(int(c[i:i + 2], 16) for i in (1, 3, 5)))
 
-def mark(name, link1, link2, title):
-    open(f"{out}/{name}", "w").write(
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="{title}"><title>{title}</title>{MARK_INNER.format(a=link1, b=link2, w=5.5)}</svg>')
 
-def icon(name, stroke):
-    open(f"{out}/{name}", "w").write(
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" width="100" height="100" role="img" aria-label="TrustUp"><title>TrustUp</title>'
-        f'<rect width="100" height="100" rx="23" fill="{INK}"/><g transform="translate(18 18)">{MARK_INNER.format(a=OFF, b=LIME, w=stroke)}</g></svg>')
+def n(v: float) -> str:
+    return f"{v:.2f}".rstrip("0").rstrip(".")
 
-lockup("trustup-logo-light.svg", INK, LIME, INK, STRONG, "TrustUp")   # on white / light backgrounds
-lockup("trustup-logo-dark.svg", OFF, LIME, OFF, LIME, "TrustUp")      # on ink / dark backgrounds
-lockup("trustup-logo-lime.svg", INK, OFF, INK, INK, "TrustUp")        # on lime backgrounds
-mark("trustup-mark-light.svg", INK, LIME, "TrustUp")
-mark("trustup-mark-dark.svg", OFF, LIME, "TrustUp")
-mark("trustup-mark-lime.svg", INK, OFF, "TrustUp")
-icon("trustup-app-icon.svg", 5.5)        # 120px+ uses
-icon("trustup-app-icon-small.svg", 7)    # favicon / small sizes (thicker strokes, as in the design)
 
-json.dump({"width": W, "height": H, "mark": MARK, "markY": (H - MARK) / 2, "trust": trust_d, "up": up_d,
-           "colors": {"ink": INK, "off": OFF, "lime": LIME, "strong": STRONG}}, open(f"{out}/paths.json", "w"))
-print(json.dumps({"W": round(W, 2), "H": H, "colors": {"ink": INK, "off": OFF, "lime": LIME, "strong": STRONG}}))
+def mark_group(x: float, y: float, height: float) -> tuple[str, float]:
+    """The mark drawn `height` tall with its top-left corner at (x, y). Returns (svg, width)."""
+    k = height / mark["h"]
+    body = "".join(f'<path fill="{fill}" d="{d}"/>' for fill, d in mark["paths"])
+    return f'<g transform="translate({n(x - mark["x"] * k)} {n(y - mark["y"] * k)}) scale({k:.5f})">{body}</g>', mark["w"] * k
+
+
+def wordmark_group(x: float, y: float, height: float, fill: str) -> tuple[str, float]:
+    k = height / wordmark["h"]
+    body = "".join(f'<path d="{d}"/>' for _, d in wordmark["paths"])
+    return f'<g fill="{fill}" transform="translate({n(x - wordmark["x"] * k)} {n(y - wordmark["y"] * k)}) scale({k:.5f})">{body}</g>', wordmark["w"] * k
+
+
+def svg(width: float, height: float, body: str) -> str:
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {n(width)} {n(height)}" width="{n(width)}" height="{n(height)}" '
+            f'role="img" aria-label="TrustUp"><title>TrustUp</title>{body}</svg>\n')
+
+
+# ---- horizontal lock-up. H is the wordmark's full height (top of the "t" to the bottom of the "p").
+# The mark starts level with the top of the "t" and ends just below the baseline, so it sits with
+# the letters, not with the tail of the "p". The gap is a fifth of the height.
+H = 100.0
+GAP = 0.2 * H
+MARK_H = 0.86 * H
+m, mark_w = mark_group(0, 0, MARK_H)
+HORIZONTAL_W = mark_w + GAP + wordmark["w"] * (H / wordmark["h"])
+
+
+def horizontal(fill: str) -> str:
+    w, _ = wordmark_group(mark_w + GAP, 0, H, fill)
+    return svg(HORIZONTAL_W, H, m + w)
+
+
+# ---- stacked lock-up: proportions of the source (mark above, wordmark below, centred)
+def stacked(fill: str) -> str:
+    text_h = 100.0
+    text_w = wordmark["w"] * text_h / wordmark["h"]
+    mark_h = text_h * 194 / 136          # the source draws the mark 194 high over a 136 high wordmark
+    gap = text_h * 48 / 136              # and leaves 48 between them
+    mk, mw = mark_group((text_w - mark["w"] * mark_h / mark["h"]) / 2, 0, mark_h)
+    w, _ = wordmark_group(0, mark_h + gap, text_h, fill)
+    return svg(text_w, mark_h + gap + text_h, mk + w)
+
+
+def app_icon(mark_width: float) -> str:
+    """The mark centred on a white rounded square, 100 x 100."""
+    height = mark_width * mark["h"] / mark["w"]
+    mk, _ = mark_group((100 - mark_width) / 2, (100 - height) / 2, height)
+    return svg(100, 100, f'<rect width="100" height="100" rx="23" fill="{ICON_BACKGROUND}"/>{mk}')
+
+
+BRAND.mkdir(parents=True, exist_ok=True)
+for old in BRAND.glob("trustup-*.svg"):
+    old.unlink()
+(BRAND / "trustup-mark.svg").write_text(svg(mark["w"] * 100 / mark["h"], 100, mark_group(0, 0, 100)[0]))
+(BRAND / "trustup-logo-light.svg").write_text(horizontal(WORDMARK_ON_LIGHT))
+(BRAND / "trustup-logo-dark.svg").write_text(horizontal(WORDMARK_ON_DARK))
+(BRAND / "trustup-logo-stacked-light.svg").write_text(stacked(WORDMARK_ON_LIGHT))
+(BRAND / "trustup-logo-stacked-dark.svg").write_text(stacked(WORDMARK_ON_DARK))
+(BRAND / "trustup-app-icon.svg").write_text(app_icon(62))
+(ROOT / "src/app/icon.svg").write_text(app_icon(70))  # small sizes: a little less margin
+
+# ---- the same shapes for the React component. Its two wordmark colours are written out in
+# src/components/app/logo.tsx (Tailwind needs them as literal class names): keep them equal to
+# WORDMARK_ON_LIGHT and WORDMARK_ON_DARK, which this script prints.
+mark_k, word_k = MARK_H / mark["h"], H / wordmark["h"]
+ts = f'''// Generated by scripts/build_brand.py from scripts/brand/trustup-logo-source.svg.
+// Regenerate rather than hand-edit. Static SVG files live in public/brand/.
+
+export const LOGO_WIDTH = {n(HORIZONTAL_W)};
+export const LOGO_HEIGHT = {n(H)};
+export const MARK_TRANSFORM = "translate({n(-mark["x"] * mark_k)} {n(-mark["y"] * mark_k)}) scale({mark_k:.5f})";
+export const WORDMARK_TRANSFORM = "translate({n(mark_w + GAP - wordmark["x"] * word_k)} {n(-wordmark["y"] * word_k)}) scale({word_k:.5f})";
+export const MARK_PATHS: {{ fill: string; d: string }}[] = {json.dumps([{"fill": f, "d": d} for f, d in mark["paths"]], indent=2)};
+export const WORDMARK_PATHS: string[] = {json.dumps([d for _, d in wordmark["paths"]], indent=2)};
+'''
+(ROOT / "src/components/app/brand-paths.ts").write_text(ts)
+print(json.dumps({"mark colours": sorted({f for f, _ in mark["paths"]}), "wordmark on dark": WORDMARK_ON_DARK,
+                  "wordmark on light": WORDMARK_ON_LIGHT, "horizontal": [round(HORIZONTAL_W, 1), H]}))
